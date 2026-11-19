@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Nara Cards</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&family=Noto+Serif+JP:wght@700;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --text: #f3efe6; --dim: rgba(243, 239, 230, .5); }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d0b09; color: var(--text);
+               font-family: 'Noto Sans JP', sans-serif; touch-action: none; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; position: fixed; inset: 0; }
+  .mono { font-family: 'IBM Plex Mono', monospace; letter-spacing: .2em; text-transform: uppercase; }
+  .ui { position: fixed; z-index: 3; pointer-events: none; }
+  .top { top: 0; left: 0; right: 0; display: flex; justify-content: space-between; padding: 26px 34px; font-size: 11px; color: var(--dim); }
+  .top b { color: var(--text); font-weight: 500; }
+  .bottom { bottom: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 22px 34px; font-size: 10px; color: var(--dim); }
+  .modes { pointer-events: auto; display: flex; gap: 4px; padding: 4px; border: 1px solid rgba(243, 239, 230, .16); border-radius: 999px; backdrop-filter: blur(8px); }
+  .modes button { all: unset; cursor: pointer; padding: 9px 16px; border-radius: 999px; font: 500 10px 'IBM Plex Mono', monospace; letter-spacing: .2em; color: var(--dim); transition: background .4s, color .4s; }
+  .modes button.on { background: var(--text); color: #14110d; }
+  .count { font: 500 13px 'IBM Plex Mono', monospace; letter-spacing: .1em; color: var(--text); }
+  .count span { color: var(--dim); }
+  .bigk { position: fixed; top: 50%; right: 5vw; z-index: 1; pointer-events: none; writing-mode: vertical-rl;
+          font: 900 min(20vh, 15vw) / 1 'Noto Serif JP', serif; color: rgba(243, 239, 230, .055); letter-spacing: .05em;
+          transform: translateY(-50%); white-space: nowrap; will-change: transform, opacity; }
+  .bigen { position: fixed; left: 6vw; top: 50%; width: 24vw; z-index: 1; pointer-events: none; font: 500 11px 'IBM Plex Mono', monospace;
+           letter-spacing: .4em; color: var(--dim); will-change: transform, opacity; }
+  .bigen b { display: block; font: 900 clamp(22px, 2.3vw, 34px) / 1.55 'Noto Serif JP', serif; letter-spacing: .04em; color: rgba(243, 239, 230, .92); margin-top: 16px; }
+  .bigen i { display: block; width: 36px; height: 1px; background: rgba(243, 239, 230, .4); margin-top: 22px; }
+  @media (max-width: 1000px) { .bigen { display: none; } }
+  .hint span { margin: 0 10px; opacity: .35; }
+  @media (max-width: 720px) {
+    .top, .bottom { padding: 16px; }
+    .bigen, .hint { display: none; }
+  }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="bgtext"></div>
+<div class="ui top mono"><span><b>NARA</b> · 奈良めぐりカード</span><span class="count" id="count">01 <span>/ 07</span></span></div>
+<div class="ui bottom mono">
+  <span class="hint">← Drag →<span>/</span>Tap · flip<span>/</span>Hold · look closer<span>/</span>F · Flow</span>
+  <span class="modes"><button id="mDeck" class="on">Deck</button><button id="mFlow">3D Flow</button></span>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ================================================================ content
+const CARDS = [
+  { id: 'deer', ja: '奈良公園', en: 'Nara Park', copy: '鹿と目が合ったら、旅のはじまり。',
+    desc: '約1,300頭の鹿が暮らす広い公園。鹿せんべいを手にした瞬間、あっという間に囲まれます。',
+    rows: [['ACCESS', '近鉄奈良駅から徒歩5分'], ['BEST', '朝の7時、人が少ない時間'], ['TIP', 'お辞儀をすると、鹿もお辞儀を返す']],
+    paper: '#f2eadb', ink: '#231f1a', accent: '#c9532e', bg: ['#1c150e', '#3d2a18'] },
+  { id: 'todaiji', ja: '東大寺', en: 'Todai-ji', copy: '見上げるほど、小さくなれる。',
+    desc: '世界最大級の木造建築、大仏殿。高さ約15mの盧舎那仏が、静かに迎えてくれます。',
+    rows: [['ACCESS', '近鉄奈良駅から徒歩20分'], ['BEST', '開門直後の朝'], ['TIP', '柱の穴をくぐると無病息災']],
+    paper: '#16203a', ink: '#f1e4c4', accent: '#d9a441', bg: ['#070b18', '#1a2547'] },
+  { id: 'pagoda', ja: '興福寺', en: 'Kofuku-ji', copy: '五つの屋根に、千三百年。',
+    desc: '奈良のシンボル、五重塔。高さ約50mで、京都・東寺に次ぐ日本で二番目の高さです。',
+    rows: [['ACCESS', '近鉄奈良駅から徒歩5分'], ['BEST', '夕暮れ'], ['TIP', '猿沢池の水面に、もう一つの塔']],
+    paper: '#f4dfc6', ink: '#2a1a1c', accent: '#b8432f', bg: ['#1d0d0c', '#5a2a22'] },
+  { id: 'lantern', ja: '春日大社', en: 'Kasuga Taisha', copy: '三千の灯りが、道を照らす。',
+    desc: '約3,000基の燈籠が並ぶ朱色の社。節分と夏の万燈籠では、すべての燈籠に火が灯ります。',
+    rows: [['ACCESS', 'バス「春日大社本殿」すぐ'], ['BEST', '万燈籠の夜'], ['TIP', '参道の鹿は、神様の使い']],
+    paper: '#10241d', ink: '#efe3c8', accent: '#e8b04a', bg: ['#04100c', '#123428'] },
+  { id: 'wakakusa', ja: '若草山', en: 'Mt. Wakakusa', copy: '山が燃える夜、冬が終わる。',
+    desc: '三つの丘が重なる芝の山。1月の山焼きでは山全体が炎に包まれ、山頂からは奈良の街を一望できます。',
+    rows: [['ACCESS', '東大寺から徒歩15分'], ['BEST', '夜景、1月の山焼き'], ['TIP', '山頂までは約40分']],
+    paper: '#0f1431', ink: '#f2e6da', accent: '#ff7a3d', bg: ['#05071a', '#24204a'] },
+  { id: 'naramachi', ja: 'ならまち', en: 'Naramachi', copy: '格子の向こうに、町の時間。',
+    desc: '江戸から明治の町家が残る旧市街。古民家カフェや雑貨店を、のんびり歩いて巡れます。',
+    rows: [['ACCESS', '近鉄奈良駅から徒歩15分'], ['BEST', '平日の午後'], ['TIP', '軒先の赤い「身代わり申」は魔除け']],
+    paper: '#efe2cc', ink: '#2b2018', accent: '#2b3f6c', bg: ['#140e09', '#3b2a1d'] },
+  { id: 'next', ja: 'あなたの一枚', en: 'Your Photo', copy: '次の旅人へ、写真をつなごう。',
+    desc: 'このカードの写真は、前の旅人が撮ったもの。あなたが撮る一枚が、次の誰かの奈良になります。',
+    rows: [['STEP 1', '奈良で一枚、撮る'], ['STEP 2', 'カードにする'], ['STEP 3', '次の人へ渡す']],
+    paper: '#1a1830', ink: '#efe9ff', accent: '#9d8cff', bg: ['#08071a', '#2c2458'] },
+];
+const NC = CARDS.length;
+
+const ALL_TEXT = CARDS.map((c) => c.ja + c.copy + c.desc + c.rows.flat().join('')).join('') + '前の旅人タップで戻る';
+await Promise.all([
+  ['900', 'Noto Serif JP'], ['700', 'Noto Serif JP'], ['400', 'Noto Sans JP'], ['700', 'Noto Sans JP'], ['900', 'Noto Sans JP'],
+].map(([w, f]) => document.fonts.load(`${w} 40px "${f}"`, ALL_TEXT)).concat([document.fonts.load('500 20px "IBM Plex Mono"', 'PHOTO')]));
+
+// ================================================================ utils
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+const outBack = (x) => { const c = 1.5; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const damp = (a, b, r, dt) => lerp(a, b, 1 - Math.exp(-r * dt));
+const TAU = Math.PI * 2;
+let seed = 3;
+const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+
+// ================================================================ card art (procedural "photos")
+const CW = 900, CH = 1260, AX = 36, AY = 36, AW = 828, AH = 740;
+const noise = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d'), d = g.createImageData(256, 256);
+  for (let i = 0; i < d.data.length; i += 4) { const v = Math.random() * 255; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
+  g.putImageData(d, 0, 0); return c;
+})();
+const grad = (c, y0, y1, stops) => { const g = c.createLinearGradient(0, y0, 0, y1); stops.forEach((s, i) => g.addColorStop(i / (stops.length - 1), s)); return g; };
+const circle = (c, x, y, r, fill) => { c.beginPath(); c.arc(x, y, r, 0, TAU); c.fillStyle = fill; c.fill(); };
+const poly = (c, pts, fill) => { c.beginPath(); pts.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y))); c.closePath(); c.fillStyle = fill; c.fill(); };
+const glow = (c, x, y, r, col) => { const g = c.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2); };
+// a temple roof with upturned eaves
+const roof = (c, cx, y, hw, h, fill) => {
+  c.beginPath(); c.moveTo(cx - hw - 18, y - 4); c.quadraticCurveTo(cx - hw * 0.72, y + 2, cx - hw * 0.5, y - h);
+  c.lineTo(cx + hw * 0.5, y - h); c.quadraticCurveTo(cx + hw * 0.72, y + 2, cx + hw + 18, y - 4);
+  c.lineTo(cx + hw, y + 10); c.lineTo(cx - hw, y + 10); c.closePath(); c.fillStyle = fill; c.fill();
+};
+
+// Each picture is painted in depth layers: L(d) starts a new layer at depth d (0 = far, 1 = near).
+// The layers flatten into the photo, and their silhouettes into a depth map the card shader uses for parallax.
+const ART = {
+  deer(c, L) {
+    c.fillStyle = grad(c, 0, AH, ['#f6e7c8', '#efcf9f', '#e2a877']); c.fillRect(0, 0, AW, AH);
+    glow(c, 560, 250, 300, 'rgba(255,190,120,.55)'); circle(c, 560, 250, 120, '#d4552f');
+    const hill = (y, a, f, col) => { c.beginPath(); c.moveTo(0, AH); for (let x = 0; x <= AW; x += 8) c.lineTo(x, y + Math.sin(x * f + a) * 26); c.lineTo(AW, AH); c.fillStyle = col; c.fill(); };
+    L(0.3); hill(470, 1, 0.006, '#9c8f6a');
+    L(0.5); hill(560, 3, 0.009, '#5f6b49');
+    L(0.72); hill(660, 0.5, 0.004, '#2f3926');
+    // trees
+    for (const [x, s] of [[90, 1], [160, 0.75], [730, 1.15]]) { c.fillStyle = '#26301f'; c.fillRect(x - 6 * s, 560 - 40 * s, 12 * s, 120 * s); circle(c, x, 520 - 40 * s, 70 * s, '#26301f'); circle(c, x - 40 * s, 560 - 40 * s, 50 * s, '#26301f'); circle(c, x + 40 * s, 560 - 40 * s, 50 * s, '#26301f'); }
+    // deer
+    L(1); c.save(); c.translate(80, 40); c.fillStyle = '#211c16'; c.strokeStyle = '#211c16'; c.lineCap = 'round';
+    c.beginPath(); c.ellipse(330, 520, 120, 52, 0, 0, TAU); c.fill();
+    poly(c, [[395, 505], [432, 405], [466, 412], [446, 528]], '#211c16');
+    c.beginPath(); c.ellipse(470, 398, 40, 22, -0.25, 0, TAU); c.fill();
+    c.beginPath(); c.ellipse(503, 410, 21, 13, -0.2, 0, TAU); c.fill();
+    c.beginPath(); c.ellipse(440, 380, 22, 8, -0.7, 0, TAU); c.fill();
+    c.lineWidth = 8; c.beginPath(); c.moveTo(462, 380); c.lineTo(440, 318); c.lineTo(424, 262); c.moveTo(440, 318); c.lineTo(404, 300); c.moveTo(452, 348); c.lineTo(482, 318); c.stroke();
+    c.lineWidth = 15; for (const [x0, x1] of [[250, 242], [282, 292], [380, 372], [408, 424]]) { c.beginPath(); c.moveTo(x0, 545); c.lineTo(x1, 655); c.stroke(); }
+    c.beginPath(); c.ellipse(212, 505, 16, 10, 0.4, 0, TAU); c.fill();
+    c.restore();
+  },
+  todaiji(c, L) {
+    c.fillStyle = grad(c, 0, AH, ['#0c1226', '#1b2750', '#3a3f6a']); c.fillRect(0, 0, AW, AH);
+    for (let i = 0; i < 70; i++) circle(c, rnd() * AW, rnd() * 380, rnd() * 1.6 + 0.4, `rgba(255,240,210,${0.3 + rnd() * 0.6})`);
+    L(0.15); glow(c, 640, 190, 220, 'rgba(244,220,160,.35)'); circle(c, 640, 190, 64, '#f4dca0');
+    const ink = '#070a16', cx = 414;
+    L(0.95); c.fillStyle = ink; c.fillRect(110, 640, 610, 100);
+    L(0.7); c.fillStyle = ink; c.fillRect(150, 600, 530, 44);
+    c.fillRect(214, 500, 400, 104);
+    c.fillStyle = 'rgba(217,164,65,.22)'; for (let x = 232; x < 600; x += 46) c.fillRect(x, 512, 6, 88);
+    roof(c, cx, 505, 300, 62, ink);
+    c.fillStyle = ink; c.fillRect(264, 384, 300, 70);
+    roof(c, cx, 392, 250, 94, ink);
+    c.fillStyle = '#d9a441'; c.fillRect(cx - 120, 292, 240, 8);
+    poly(c, [[cx - 128, 300], [cx - 118, 262], [cx - 104, 268], [cx - 108, 300]], '#d9a441');
+    poly(c, [[cx + 128, 300], [cx + 118, 262], [cx + 104, 268], [cx + 108, 300]], '#d9a441');
+    glow(c, cx, 420, 70, 'rgba(255,200,110,.6)'); c.fillStyle = '#f0c46a'; c.fillRect(cx - 30, 408, 60, 26);
+  },
+  pagoda(c, L) {
+    c.fillStyle = grad(c, 0, AH, ['#f7d9b2', '#ef9f6c', '#c2563f', '#5b2a2a']); c.fillRect(0, 0, AW, AH);
+    glow(c, 414, 360, 320, 'rgba(255,236,200,.6)'); circle(c, 414, 360, 125, 'rgba(255,240,215,.9)');
+    L(0.35);
+    const ink = '#2a1a1c', water = 640;
+    const draw = () => {
+      c.fillStyle = ink; c.fillRect(300, water - 20, 228, 20);
+      for (let k = 0; k < 5; k++) {
+        const hw = 168 - k * 21, y = water - 22 - k * 74;
+        c.fillStyle = ink; c.fillRect(414 - hw * 0.5, y - 46, hw, 46);
+        roof(c, 414, y - 44, hw, 26, ink);
+      }
+      c.fillRect(410, water - 22 - 5 * 74 - 140, 8, 150);
+      for (let i = 0; i < 9; i++) { c.beginPath(); c.ellipse(414, water - 410 - i * 12, 14, 3, 0, 0, TAU); c.fill(); }
+    };
+    // hills behind
+    c.beginPath(); c.moveTo(0, water); c.quadraticCurveTo(200, 520, 420, 600); c.quadraticCurveTo(640, 540, AW, water); c.fillStyle = 'rgba(70,30,32,.7)'; c.fill();
+    L(0.68); draw();
+    L(0.9); c.fillStyle = grad(c, water, AH, ['#7a3a33', '#2c1416']); c.fillRect(0, water, AW, AH - water);
+    c.save(); c.beginPath(); c.rect(0, water, AW, AH - water); c.clip(); c.translate(0, water * 2); c.scale(1, -1); c.globalAlpha = 0.28; draw(); c.restore();
+    c.strokeStyle = 'rgba(255,220,190,.35)'; c.lineWidth = 2; for (let i = 0; i < 9; i++) { const y = water + 14 + i * 10, w = 60 + rnd() * 160; c.beginPath(); c.moveTo(414 - w, y); c.lineTo(414 + w, y); c.stroke(); }
+  },
+  lantern(c, L) {
+    c.fillStyle = grad(c, 0, AH, ['#0d221b', '#0a1a14', '#050d0a']); c.fillRect(0, 0, AW, AH);
+    L(0.25);
+    for (let x = 40; x < AW; x += 96) { c.fillStyle = 'rgba(176,52,32,.75)'; c.fillRect(x, 150, 22, 330); }
+    c.fillStyle = 'rgba(176,52,32,.75)'; c.fillRect(0, 150, AW, 22); c.fillRect(0, 200, AW, 10);
+    const lantern = (x, y, s) => {
+      const st = '#7b7c6c';
+      glow(c, x, y - 120 * s, 120 * s, 'rgba(255,190,90,.55)');
+      c.fillStyle = st; c.fillRect(x - 34 * s, y - 16 * s, 68 * s, 16 * s);
+      c.fillRect(x - 9 * s, y - 92 * s, 18 * s, 78 * s);
+      c.fillRect(x - 30 * s, y - 100 * s, 60 * s, 10 * s);
+      c.fillStyle = '#ffd27a'; c.fillRect(x - 22 * s, y - 146 * s, 44 * s, 46 * s);
+      c.fillStyle = st; c.fillRect(x - 4 * s, y - 146 * s, 8 * s, 46 * s);
+      poly(c, [[x - 46 * s, y - 146 * s], [x + 46 * s, y - 146 * s], [x + 16 * s, y - 180 * s], [x - 16 * s, y - 180 * s]], st);
+      circle(c, x, y - 186 * s, 9 * s, st);
+    };
+    for (let r = 0; r < 3; r++) {
+      L(0.5 + r * 0.25);
+      const s = 0.55 + r * 0.3, y = 470 + r * 120, sp = 170 * s;
+      for (let x = (r % 2) * sp * 0.5 - 20; x < AW + 60; x += sp) lantern(x, y, s);
+    }
+    c.fillStyle = grad(c, 560, AH, ['rgba(5,13,10,0)', 'rgba(5,13,10,.85)']); c.fillRect(0, 560, AW, AH - 560);
+  },
+  wakakusa(c, L) {
+    c.fillStyle = grad(c, 0, AH, ['#05071a', '#1a1840', '#3a2550']); c.fillRect(0, 0, AW, AH);
+    for (let i = 0; i < 120; i++) circle(c, rnd() * AW, rnd() * 420, rnd() * 1.5 + 0.3, `rgba(255,240,230,${0.25 + rnd() * 0.7})`);
+    const ridge = (dy) => { c.beginPath(); c.moveTo(-20, 640 + dy); c.quadraticCurveTo(110, 420 + dy, 250, 470 + dy); c.quadraticCurveTo(410, 330 + dy, 560, 430 + dy); c.quadraticCurveTo(700, 380 + dy, 860, 560 + dy); };
+    glow(c, 414, 470, 380, 'rgba(255,110,50,.28)');
+    L(0.55); ridge(0); c.lineTo(AW, AH); c.lineTo(0, AH); c.closePath(); c.fillStyle = '#080a18'; c.fill();
+    c.save(); c.shadowColor = '#ff6a2a'; c.shadowBlur = 30; c.lineCap = 'round';
+    for (const [dy, w, col] of [[22, 10, 'rgba(255,120,50,.9)'], [60, 6, 'rgba(255,150,70,.7)'], [104, 4, 'rgba(255,170,90,.5)']]) {
+      c.setLineDash([26, 14, 8, 18]); c.lineWidth = w; c.strokeStyle = col; ridge(dy); c.stroke();
+    }
+    c.restore();
+    for (let i = 0; i < 60; i++) circle(c, rnd() * AW, 420 + rnd() * 180, rnd() * 2 + 1, `rgba(255,${150 + rnd() * 80},80,${rnd() * 0.8})`);
+    L(0.95); c.fillStyle = '#05060f'; c.fillRect(0, 650, AW, 90);
+    for (let i = 0; i < 160; i++) circle(c, rnd() * AW, 660 + rnd() * 70, rnd() * 1.8 + 0.4, `rgba(255,${200 + rnd() * 50},150,${0.3 + rnd() * 0.6})`);
+  },
+  naramachi(c, L) {
+    L(0.25); c.fillStyle = '#3b2a1e'; c.fillRect(0, 0, AW, AH);
+    c.fillStyle = '#1f1610'; c.fillRect(0, 0, AW, 120);
+    for (let y = 18; y < 120; y += 22) { c.fillStyle = 'rgba(255,255,255,.05)'; c.fillRect(0, y, AW, 3); }
+    c.fillStyle = '#2a1d14'; c.fillRect(0, 120, AW, 20);
+    c.fillStyle = '#5c412d'; for (let x = 30; x < AW; x += 24) c.fillRect(x, 150, 11, 520);
+    c.fillStyle = '#4a3324'; for (const y of [150, 300, 470, 660]) c.fillRect(0, y, AW, 12);
+    // noren
+    L(0.6); const nx = 290, nw = 250;
+    for (let i = 0; i < 3; i++) { c.fillStyle = '#2b3f6c'; c.fillRect(nx + i * (nw / 3) + 3, 140, nw / 3 - 6, 280); }
+    circle(c, nx + nw / 2, 260, 38, '#efe2cc'); circle(c, nx + nw / 2, 260, 24, '#2b3f6c');
+    c.fillStyle = '#1b2a4a'; c.fillRect(nx - 10, 134, nw + 20, 12);
+    // paper lantern
+    L(0.85); glow(c, 140, 300, 170, 'rgba(255,190,110,.55)');
+    c.beginPath(); c.ellipse(140, 300, 46, 66, 0, 0, TAU); c.fillStyle = '#f7d9a4'; c.fill();
+    c.strokeStyle = 'rgba(150,80,40,.5)'; c.lineWidth = 2; for (let y = 250; y < 360; y += 14) { c.beginPath(); c.ellipse(140, y, 44 - Math.abs(y - 300) * 0.3, 4, 0, 0, TAU); c.stroke(); }
+    c.fillStyle = '#1b130d'; c.fillRect(126, 228, 28, 10); c.fillRect(126, 362, 28, 10);
+    // migawari-zaru: a string of red monkeys
+    L(1); c.strokeStyle = '#1b130d'; c.lineWidth = 3; c.beginPath(); c.moveTo(680, 140); c.lineTo(680, 560); c.stroke();
+    for (let i = 0; i < 6; i++) { const y = 190 + i * 66; circle(c, 680, y, 28, '#c8322b'); circle(c, 680, y - 6, 12, '#f3e6d0'); circle(c, 663, y + 14, 8, '#c8322b'); circle(c, 697, y + 14, 8, '#c8322b'); }
+    L(0.9); c.fillStyle = '#6f6458'; c.fillRect(0, 672, AW, 68);
+    c.fillStyle = 'rgba(0,0,0,.25)'; for (let x = 0; x < AW; x += 70) c.fillRect(x, 672, 2, 68);
+  },
+  next(c, L) {
+    c.fillStyle = grad(c, 0, AH, ['#141230', '#2c2458', '#4b3780']); c.fillRect(0, 0, AW, AH);
+    const cx = 414, cy = 380;
+    glow(c, cx, cy, 340, 'rgba(157,140,255,.35)');
+    L(0.55); c.save(); c.translate(cx, cy);
+    for (let k = 0; k < 6; k++) {
+      c.save(); c.rotate(k * TAU / 6 + 0.25);
+      poly(c, [[0, -60], [210, -150], [250, 40], [40, 60]], k % 2 ? '#1c1840' : '#251f52'); c.restore();
+    }
+    c.restore(); L(0.9); c.save(); c.translate(cx, cy);
+    c.beginPath(); c.arc(0, 0, 260, 0, TAU); c.lineWidth = 34; c.strokeStyle = '#100e26'; c.stroke();
+    c.beginPath(); c.arc(0, 0, 278, 0, TAU); c.lineWidth = 2; c.strokeStyle = 'rgba(200,190,255,.4)'; c.stroke();
+    const g = c.createRadialGradient(0, 0, 0, 0, 0, 70); g.addColorStop(0, '#fff'); g.addColorStop(0.4, '#c9bfff'); g.addColorStop(1, 'rgba(157,140,255,0)');
+    c.fillStyle = g; c.beginPath(); c.arc(0, 0, 70, 0, TAU); c.fill();
+    c.restore();
+    c.fillStyle = 'rgba(239,233,255,.7)'; c.font = '500 20px "IBM Plex Mono"'; c.letterSpacing = '8px'; c.textAlign = 'center';
+    c.fillText('YOUR PHOTO HERE', cx, 700); c.letterSpacing = '0px'; c.textAlign = 'left';
+  },
+};
+
+function roundRect(c, x, y, w, h, r) { c.beginPath(); c.roundRect(x, y, w, h, r); }
+function wrap(c, text, x, y, maxW, lh) {
+  let line = '';
+  for (const ch of Array.from(text)) {
+    if (c.measureText(line + ch).width > maxW && line) { c.fillText(line, x, y); y += lh; line = ''; }
+    line += ch;
+  }
+  if (line) c.fillText(line, x, y);
+  return y + lh;
+}
+const mono = (c, size, ls = 6) => { c.font = `500 ${size}px "IBM Plex Mono"`; c.letterSpacing = `${ls}px`; };
+const plain = (c) => { c.letterSpacing = '0px'; };
+
+function frontTexture(card, i) {
+  const cv = document.createElement('canvas'); cv.width = CW; cv.height = CH;
+  const c = cv.getContext('2d');
+  c.fillStyle = card.paper; c.fillRect(0, 0, CW, CH);
+  // the "photo", painted in depth layers
+  const mk = () => { const k = document.createElement('canvas'); k.width = AW; k.height = AH; return [k, k.getContext('2d')]; };
+  const [art, ac] = mk(), [lay, lc] = mk(), [sil, sc] = mk(), [dep, dc] = mk();
+  dc.fillStyle = '#000'; dc.fillRect(0, 0, AW, AH);
+  let depth = 0;
+  const flush = () => {
+    ac.drawImage(lay, 0, 0);
+    sc.globalCompositeOperation = 'copy'; sc.drawImage(lay, 0, 0);
+    sc.globalCompositeOperation = 'source-in'; const g = Math.round(depth * 255); sc.fillStyle = `rgb(${g},${g},${g})`; sc.fillRect(0, 0, AW, AH);
+    dc.drawImage(sil, 0, 0);
+    lc.save(); lc.setTransform(1, 0, 0, 1, 0, 0); lc.clearRect(0, 0, AW, AH); lc.restore();
+  };
+  seed = 101 + i * 17;
+  ART[card.id](lc, (d) => { flush(); depth = d; });
+  flush();
+  c.save(); roundRect(c, AX, AY, AW, AH, 26); c.clip(); c.translate(AX, AY);
+  c.drawImage(art, 0, 0);
+  c.globalAlpha = 0.07; c.globalCompositeOperation = 'overlay'; c.fillStyle = c.createPattern(noise, 'repeat'); c.fillRect(0, 0, AW, AH);
+  c.restore();
+  // depth map for the whole card (neutral grey outside the photo), softened so parallax edges don't tear
+  const dcv = document.createElement('canvas'); dcv.width = CW; dcv.height = CH;
+  const dd = dcv.getContext('2d'); dd.fillStyle = '#808080'; dd.fillRect(0, 0, CW, CH);
+  dd.filter = 'blur(4px)'; dd.drawImage(dep, AX, AY); dd.filter = 'none';
+  card.depthTex = new THREE.CanvasTexture(dcv); card.depthTex.colorSpace = THREE.NoColorSpace;
+  c.fillStyle = card.ink; c.globalAlpha = 0.06; c.globalCompositeOperation = 'source-over'; c.fillStyle = c.createPattern(noise, 'repeat'); c.fillRect(0, 0, CW, CH); c.globalAlpha = 1;
+  // photo credit, set in the photo's corner like a print
+  mono(c, 15, 5); c.fillStyle = 'rgba(255,255,255,.75)'; c.fillText('PHOTO · 前の旅人', AX + 24, AY + AH - 24); plain(c);
+  // type
+  c.fillStyle = card.accent; mono(c, 20, 7); c.fillText(`0${i + 1} — ${card.en}`, 58, 846); plain(c);
+  c.fillStyle = card.ink; c.font = `900 ${card.ja.length > 5 ? 82 : 100}px "Noto Serif JP"`; c.fillText(card.ja, 52, 966);
+  c.font = '400 30px "Noto Sans JP"'; c.globalAlpha = 0.85; c.fillText(card.copy, 58, 1036); c.globalAlpha = 1;
+  c.fillStyle = card.ink; c.globalAlpha = 0.18; c.fillRect(58, 1090, CW - 116, 2); c.globalAlpha = 0.55;
+  mono(c, 16, 5); c.fillText('NARA · 2026', 58, 1184); c.textAlign = 'right'; c.fillText('TAP TO FLIP ↻', CW - 58, 1184); c.textAlign = 'left'; plain(c);
+  c.globalAlpha = 1;
+  return tex(cv);
+}
+function backTexture(card, i) {
+  const cv = document.createElement('canvas'); cv.width = CW; cv.height = CH;
+  const c = cv.getContext('2d');
+  c.fillStyle = card.ink; c.fillRect(0, 0, CW, CH);
+  c.globalAlpha = 0.05; c.fillStyle = c.createPattern(noise, 'repeat'); c.fillRect(0, 0, CW, CH); c.globalAlpha = 1;
+  // a big ghost of the title
+  c.fillStyle = card.paper; c.globalAlpha = 0.05; c.font = '900 420px "Noto Serif JP"'; c.fillText(Array.from(card.ja)[0], 420, 560); c.globalAlpha = 1;
+  c.fillStyle = card.accent; mono(c, 18, 7); c.fillText(`0${i + 1} / 0${NC} · ${card.en}`, 64, 110); plain(c);
+  c.fillStyle = card.paper; c.font = `900 ${card.ja.length > 5 ? 74 : 92}px "Noto Serif JP"`; c.fillText(card.ja, 58, 240);
+  c.font = '400 33px "Noto Sans JP"'; c.globalAlpha = 0.86;
+  const y = wrap(c, card.desc, 64, 350, CW - 128, 62); c.globalAlpha = 1;
+  let ry = Math.max(y + 60, 700);
+  for (const [k, v] of card.rows) {
+    c.fillStyle = card.paper; c.globalAlpha = 0.16; c.fillRect(64, ry - 52, CW - 128, 2); c.globalAlpha = 1;
+    c.fillStyle = card.accent; mono(c, 16, 5); c.fillText(k, 64, ry); plain(c);
+    c.fillStyle = card.paper; c.font = '700 30px "Noto Sans JP"'; c.fillText(v, 250, ry + 2);
+    ry += 104;
+  }
+  c.fillStyle = card.paper; c.globalAlpha = 0.5; mono(c, 16, 5); c.textAlign = 'right'; c.fillText('TAP TO RETURN ↻', CW - 64, 1184); c.textAlign = 'left'; plain(c); c.globalAlpha = 1;
+  return tex(cv);
+}
+let renderer;
+function tex(cv) {
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+
+// ================================================================ three setup
+renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, Math.min(innerWidth, innerHeight) < 600 ? 1.6 : 2));   // phones: fewer pixels, steadier frames
+renderer.autoClear = false;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 200);
+
+// background: a full-screen gradient that takes on the current card's colours
+const bgScene = new THREE.Scene(), bgCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const bgMat = new THREE.ShaderMaterial({
+  uniforms: { uA: { value: new THREE.Color() }, uB: { value: new THREE.Color() }, uM: { value: new THREE.Vector2() }, uT: { value: 0 }, uFlow: { value: 0 }, uAsp: { value: 1 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `
+    varying vec2 vUv; uniform vec3 uA, uB; uniform vec2 uM; uniform float uT, uFlow, uAsp;
+    float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    void main(){
+      vec2 p = (vUv - 0.5) * vec2(uAsp, 1.0);
+      float d = length(p - vec2(uM.x * 0.25, -uM.y * 0.2 + 0.05));
+      vec3 c = mix(uB, uA, smoothstep(0.0, 0.9, d));
+      c *= 1.0 - 0.35 * smoothstep(0.4, 1.1, length(p));
+      c += (h(vUv * 900.0 + floor(uT * 24.0)) - 0.5) * 0.012;       // film grain
+      gl_FragColor = vec4(c, 1.0);
+      #include <colorspace_fragment>
+    }`,
+  depthTest: false, depthWrite: false,
+});
+bgScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), bgMat));
+
+// ---- card material: rounded corners, two faces, bend, glossy sheen
+const CARD_W = 3, CARD_H = CARD_W * CH / CW;
+const cardGeo = new THREE.PlaneGeometry(CARD_W, CARD_H, 24, 32);
+const CARD_VS = `
+  uniform float uBend, uLift;
+  varying vec2 vUv; varying vec3 vWN; varying vec3 vWP;
+  void main(){
+    vUv = uv;
+    vec3 p = position;
+    float bx = p.x / ${(CARD_W / 2).toFixed(2)};
+    p.z += uBend * (bx * bx - 0.33) * 0.55 + uLift * (1.0 - bx * bx) * 0.2;   // the card bows while it moves
+    vec3 n = normalize(vec3(-uBend * bx * 0.75, 0.0, 1.0));
+    vec4 wp = modelMatrix * vec4(p, 1.0);
+    vWP = wp.xyz; vWN = normalize(mat3(modelMatrix) * n);
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }`;
+const CARD_FS = `
+  uniform sampler2D uFront, uBack, uDepth; uniform float uOpacity, uDim, uMirror, uFloorY; uniform vec2 uSize, uTilt;
+  varying vec2 vUv; varying vec3 vWN; varying vec3 vWP;
+  const vec2 ART0 = vec2(${(AX / CW).toFixed(4)}, ${(1 - (AY + AH) / CH).toFixed(4)});
+  const vec2 ART1 = vec2(${((AX + AW) / CW).toFixed(4)}, ${(1 - AY / CH).toFixed(4)});
+  float sdRound(vec2 p, vec2 b, float r){ vec2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
+  void main(){
+    vec2 p = (vUv - 0.5) * uSize;
+    float d = sdRound(p, uSize * 0.5, 0.16);
+    float aa = fwidth(d) * 1.2;
+    float a = 1.0 - smoothstep(-aa, aa, d);
+    if (a < 0.01) discard;
+    bool front = gl_FrontFacing != (uMirror > 0.5);   // a mirrored copy turns its winding inside out
+    // parallax inside the photo: near layers slide against far ones as the viewing angle changes
+    vec2 uv = vUv;
+    vec2 ia0 = step(ART0, vUv) * step(vUv, ART1);
+    if (front && ia0.x * ia0.y > 0.5) {
+      vec2 k = uTilt * 0.17 * vec2(1.0, ${(CW / CH).toFixed(4)});
+      float dep = texture2D(uDepth, vUv).r;
+      dep = texture2D(uDepth, vUv + k * (dep - 0.5)).r;      // one refinement step
+      uv = clamp(vUv + k * (dep - 0.5), ART0 + 0.002, ART1 - 0.002);
+    }
+    vec3 col = front ? texture2D(uFront, uv).rgb : texture2D(uBack, vec2(1.0 - vUv.x, vUv.y)).rgb;
+    vec3 N = normalize(vWN) * (gl_FrontFacing ? 1.0 : -1.0);
+    vec3 V = normalize(cameraPosition - vWP);
+    vec3 L = normalize(vec3(-0.4, 0.7, 0.8));
+    vec3 H = normalize(L + V);
+    float spec = pow(max(dot(N, H), 0.0), 60.0);
+    float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+    col = col * (0.82 + 0.25 * max(dot(N, L), 0.0)) * (1.0 - uDim);
+    // holographic foil on the photo: hue shifts with the viewing angle as the card tilts
+    vec2 ia = step(ART0, vUv) * step(vUv, ART1);
+    float ph = dot(N, V) * 3.0 + dot(N.xy, vec2(2.0, 1.4)) + vUv.x * 1.5 - vUv.y;
+    vec3 foil = 0.5 + 0.5 * cos(6.2831 * (vec3(0.0, 0.33, 0.67) + ph));
+    col += foil * ia.x * ia.y * (front ? 1.0 : 0.0) * (0.012 + 0.07 * fres + 0.16 * spec);
+    col += vec3(1.0, 0.97, 0.92) * (spec * 0.3 + fres * 0.08);
+    col = mix(col, vec3(1.0), smoothstep(-0.02, 0.0, d) * 0.18);  // hairline edge
+    float fade = uMirror > 0.5 ? pow(smoothstep(uFloorY - 2.0, uFloorY, vWP.y), 2.0) * 0.28 : 1.0;
+    gl_FragColor = vec4(col, a * uOpacity * fade);
+    #include <colorspace_fragment>
+  }`;
+
+const shadowTex = (() => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 340;
+  const g = c.getContext('2d'); g.filter = 'blur(22px)'; g.fillStyle = 'rgba(0,0,0,1)'; g.beginPath(); g.roundRect(50, 50, 156, 240, 20); g.fill();
+  return new THREE.CanvasTexture(c);
+})();
+
+const FLOOR_Y = -2.35;
+const mirrorM = new THREE.Matrix4().makeTranslation(0, FLOOR_Y, 0).multiply(new THREE.Matrix4().makeScale(1, -1, 1)).multiply(new THREE.Matrix4().makeTranslation(0, -FLOOR_Y, 0));
+const cards = CARDS.map((card, i) => {
+  const front = frontTexture(card, i), back = backTexture(card, i);
+  const mk = (mirror) => new THREE.ShaderMaterial({
+    uniforms: { uFront: { value: front }, uBack: { value: back }, uDepth: { value: card.depthTex }, uTilt: { value: new THREE.Vector2() }, uOpacity: { value: 1 }, uDim: { value: 0 },
+      uBend: { value: 0 }, uLift: { value: 0 }, uSize: { value: new THREE.Vector2(CARD_W, CARD_H) }, uMirror: { value: mirror }, uFloorY: { value: FLOOR_Y } },
+    vertexShader: CARD_VS, fragmentShader: CARD_FS, side: THREE.DoubleSide, transparent: true, depthWrite: !mirror,
+  });
+  const mat = mk(0), rmat = mk(1);
+  const g = new THREE.Group();
+  const mesh = new THREE.Mesh(cardGeo, mat); mesh.userData.i = i;
+  const sh = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W * 1.55, CARD_H * 1.45), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, opacity: 0.55, depthWrite: false }));
+  sh.position.set(0.12, -0.3, -0.12);
+  g.add(sh, mesh); scene.add(g);
+  // reflection on the glossy floor of the flow scene
+  const refl = new THREE.Mesh(cardGeo, rmat); refl.matrixAutoUpdate = false; refl.renderOrder = -1; scene.add(refl);
+  return { g, mesh, mat, rmat, refl, sh, flip: 0, flipT: 0, jitter: (rnd() - 0.5) * 0.09 };
+});
+
+// flow scene: an orbit of light on the floor and a soft pool of light under the ring
+const RING_R = 6.6, RING_Z = -3.2;
+const radial = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
+  const r = g.createRadialGradient(128, 128, 0, 128, 128, 128); r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.55, 'rgba(255,255,255,.25)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r; g.fillRect(0, 0, 256, 256); return new THREE.CanvasTexture(c);
+})();
+const floorGlow = new THREE.Mesh(new THREE.PlaneGeometry((RING_R + 4) * 2, (RING_R + 4) * 2), new THREE.MeshBasicMaterial({ map: radial, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 }));
+floorGlow.rotation.x = -Math.PI / 2; floorGlow.position.set(0, FLOOR_Y - 0.01, RING_Z); scene.add(floorGlow);
+const orbit = new THREE.Mesh(new THREE.RingGeometry(RING_R - 0.025, RING_R + 0.025, 256), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0, side: THREE.DoubleSide }));
+orbit.rotation.x = -Math.PI / 2; orbit.position.set(0, FLOOR_Y, RING_Z); scene.add(orbit);
+const orbit2 = new THREE.Mesh(new THREE.RingGeometry(RING_R * 0.55 - 0.012, RING_R * 0.55 + 0.012, 200), orbit.material.clone());
+orbit2.rotation.x = -Math.PI / 2; orbit2.position.set(0, FLOOR_Y, RING_Z); scene.add(orbit2);
+
+// floating motes
+const MOTES = 500;
+const mPos = new Float32Array(MOTES * 3), mSeed = new Float32Array(MOTES);
+for (let i = 0; i < MOTES; i++) { mPos.set([(rnd() - 0.5) * 34, (rnd() - 0.5) * 20, -rnd() * 22 + 4], i * 3); mSeed[i] = rnd(); }
+const moteGeo = new THREE.BufferGeometry();
+moteGeo.setAttribute('position', new THREE.BufferAttribute(mPos, 3));
+moteGeo.setAttribute('aS', new THREE.BufferAttribute(mSeed, 1));
+const moteMat = new THREE.ShaderMaterial({
+  uniforms: { uT: { value: 0 }, uC: { value: new THREE.Color() }, uSize: { value: 30 }, uFlow: { value: 0 } },
+  vertexShader: `attribute float aS; uniform float uT, uSize, uFlow; varying float vA;
+    void main(){
+      vec3 p = position;
+      p.y = mod(p.y + uT * (0.15 + aS * 0.25) + 10.0, 20.0) - 10.0;
+      p.x += sin(uT * 0.3 + aS * 20.0) * 0.6;
+      float a = atan(p.z + 6.0, p.x) + uT * 0.12 * uFlow;            // in flow mode the dust swirls around the ring
+      float r = length(vec2(p.x, p.z + 6.0));
+      p.xz = mix(p.xz, vec2(cos(a) * r, sin(a) * r - 6.0), uFlow);
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_Position = projectionMatrix * mv;
+      gl_PointSize = uSize * (0.4 + aS) / -mv.z;
+      vA = 0.25 + 0.5 * aS;
+    }`,
+  fragmentShader: `uniform vec3 uC; varying float vA;
+    void main(){ float d = length(gl_PointCoord - 0.5); gl_FragColor = vec4(uC * vA * smoothstep(0.5, 0.0, d), 1.0); }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+const motes = new THREE.Points(moteGeo, moteMat); motes.frustumCulled = false; scene.add(motes);
+
+// sparks: a burst of light shed by a card as it is thrown out (or pulled back)
+const SP = 600;
+const spP = new Float32Array(SP * 3), spV = new Float32Array(SP * 3), spC = new Float32Array(SP * 3), spB = new Float32Array(SP * 3), spLife = new Float32Array(SP);
+let spNext = 0;
+const spGeo = new THREE.BufferGeometry();
+spGeo.setAttribute('position', new THREE.BufferAttribute(spP, 3));
+spGeo.setAttribute('color', new THREE.BufferAttribute(spC, 3));
+const spMat = new THREE.ShaderMaterial({
+  uniforms: { uSize: { value: 60 } },
+  vertexShader: `attribute vec3 color; varying vec3 vC; uniform float uSize;
+    void main(){ vC = color; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = uSize / -mv.z; }`,
+  fragmentShader: `varying vec3 vC; void main(){ float d = length(gl_PointCoord - 0.5); gl_FragColor = vec4(vC * smoothstep(0.5, 0.0, d), 1.0); }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+const sparks = new THREE.Points(spGeo, spMat); sparks.frustumCulled = false; scene.add(sparks);
+const _sp = new THREE.Vector3(), _sc = new THREE.Color();
+function burst(card, dir) {
+  _sc.set(CARDS[cards.indexOf(card)].accent);
+  for (let n = 0; n < 140; n++) {
+    const i = spNext; spNext = (spNext + 1) % SP;
+    // born on the card's trailing edge, scattered over its height
+    const ex = dir > 0 ? CARD_W / 2 : -CARD_W / 2;
+    _sp.set(ex * (0.6 + Math.random() * 0.4), (Math.random() - 0.5) * CARD_H, 0.05).applyMatrix4(card.mesh.matrixWorld);
+    spP.set([_sp.x, _sp.y, _sp.z], i * 3);
+    spV.set([-dir * (1.5 + Math.random() * 5), (Math.random() - 0.3) * 2.4, (Math.random() - 0.2) * 2.5], i * 3);
+    spLife[i] = 0.6 + Math.random() * 0.7;
+    const w = Math.random() < 0.3 ? 1 : 0;   // some sparks burn white-hot
+    spB.set([lerp(_sc.r, 1, w), lerp(_sc.g, 0.95, w), lerp(_sc.b, 0.85, w)], i * 3);
+  }
+}
+function stepSparks(dt) {
+  for (let i = 0; i < SP; i++) {
+    if (spLife[i] <= 0) { spC[i * 3] = spC[i * 3 + 1] = spC[i * 3 + 2] = 0; continue; }
+    spLife[i] -= dt;
+    const drag = Math.exp(-2.2 * dt);
+    spV[i * 3] *= drag; spV[i * 3 + 1] = spV[i * 3 + 1] * drag - 1.2 * dt; spV[i * 3 + 2] *= drag;
+    spP[i * 3] += spV[i * 3] * dt; spP[i * 3 + 1] += spV[i * 3 + 1] * dt; spP[i * 3 + 2] += spV[i * 3 + 2] * dt;
+    const a = clamp(spLife[i] / 0.8) * 1.6;
+    spC[i * 3] = spB[i * 3] * a; spC[i * 3 + 1] = spB[i * 3 + 1] * a; spC[i * 3 + 2] = spB[i * 3 + 2] * a;
+  }
+  spGeo.attributes.position.needsUpdate = true; spGeo.attributes.color.needsUpdate = true;
+}
+
+// big background type (DOM), one per card
+const bgtext = document.getElementById('bgtext');
+const bigK = CARDS.map((c) => {
+  const d = document.createElement('div'); d.className = 'bigk'; d.textContent = c.ja;
+  d.style.fontSize = `min(20vh, 15vw, ${(74 / c.ja.length).toFixed(1)}vh)`;   // long titles still fit the height
+  bgtext.appendChild(d); return d;
+});
+const bigE = CARDS.map((c, i) => { const d = document.createElement('div'); d.className = 'bigen'; d.innerHTML = `0${i + 1} · ${c.en}<b>${c.copy.replace('、', '、<br>')}</b><i></i>`; bgtext.appendChild(d); return d; });
+
+// ================================================================ state: everything below is a function of a few springs
+let camZ = 11.5;
+const camFlow = new THREE.Vector3(0, 2.6, 13.2);
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix();
+  camZ = Math.max(10.4, 4.9 / (0.63 * cam.aspect));        // keep a whole card on narrow phones
+  camFlow.set(0, 2.6, Math.max(13.2, 3.4 + 4.6 / (0.63 * cam.aspect)));
+  bgMat.uniforms.uAsp.value = cam.aspect;
+  moteMat.uniforms.uSize.value = 40 * renderer.getPixelRatio();
+}
+addEventListener('resize', resize); resize();
+
+// a critically damped spring: position and velocity stay continuous (no jumps when the target changes)
+class Spring {
+  constructor(x = 0, k = 140, z = 0.92) { this.x = x; this.v = 0; this.t = x; this.k = k; this.c = 2 * Math.sqrt(k) * z; }
+  step(dt) { const n = Math.ceil(dt / 0.008), h = dt / n; for (let i = 0; i < n; i++) { this.v += ((this.t - this.x) * this.k - this.v * this.c) * h; this.x += this.v * h; } }
+}
+const deck = new Spring(0, 110, 0.86);     // continuous card position: 2.4 = between card 3 and card 4
+const flowRot = new Spring(0, 40, 1);      // ring rotation in flow mode
+const mode = new Spring(0, 26, 1);         // 0 = deck, 1 = flow
+const zoom = new Spring(0, 70, 0.85);      // 1 = holding the top card up close
+const mouse = new THREE.Vector2(), mouseS = new THREE.Vector2();
+const Q = new URLSearchParams(location.search);
+if (Q.has('i')) deck.x = deck.t = +Q.get('i');
+if (Q.has('flow')) mode.x = mode.t = +Q.get('flow');
+let time = Q.has('t') ? +Q.get('t') : 0;
+
+// ---- pose of a card in the deck, as a function of d = (card index − deck position)
+const _e = new THREE.Euler(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _p = new THREE.Vector3(), _p2 = new THREE.Vector3();
+function deckPose(c, i, d, out) {
+  let x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, s = 1, op = 1;
+  if (d >= 0) {                                   // waiting in the stack
+    const k = Math.min(d, 6);
+    y = k * 0.2; z = -k * 0.62; s = 1 - k * 0.045; rz = c.jitter * smooth(0, 1, k);
+    op = 1 - smooth(3.6, 5, k);
+  } else {                                        // thrown out to the left, along an arc, turning away
+    const e = Math.min(-d, 1.6);
+    x = -e * 7.2; y = e * 0.9 - e * e * 0.9; z = Math.sin(Math.min(e, 1) * Math.PI) * 1.2;
+    rz = e * 0.42; ry = -e * 0.9; rx = e * 0.15;
+    op = 1 - smooth(1.0, 1.4, e);
+  }
+  out.pos.set(x, y, z); out.rot.set(rx, ry, rz); out.s = s; out.op = op;
+  return out;
+}
+// ---- pose on the 3D ring
+function flowPose(i, out) {
+  const th = (i - flowRot.x) * TAU / NC;
+  const x = Math.sin(th) * RING_R, z0 = Math.cos(th) * RING_R + RING_Z, y0 = 0.1 + Math.sin(time * 0.7 + i * 1.7) * 0.18;
+  out.pos.set(x, y0, z0);
+  out.rot.set(0, th, Math.sin(time * 0.5 + i) * 0.04); out.s = 0.86; out.op = 1;
+  return out;
+}
+
+// ================================================================ input
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+let drag = null;
+const vel = [];
+const pick = (e) => {
+  ndc.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, cam);
+  const hit = ray.intersectObjects(cards.filter((c) => c.g.visible).map((c) => c.mesh))[0];
+  if (hit) return hit.object.userData.i;
+  // forgiving taps: the nearest card centre within 110 px
+  let best = -1, bd = 110;
+  cards.forEach((c, i) => {
+    if (!c.g.visible) return;
+    _pp.setFromMatrixPosition(c.mesh.matrixWorld).project(cam);
+    const dd = Math.hypot((_pp.x * 0.5 + 0.5) * innerWidth - e.clientX, (0.5 - _pp.y * 0.5) * innerHeight - e.clientY);
+    if (dd < bd && _pp.z < 1) { bd = dd; best = i; }
+  });
+  return best;
+};
+const _pp = new THREE.Vector3();
+const buzz = () => { try { navigator.vibrate && navigator.vibrate(8); } catch (e) {} };   // a tick on phones as a card lands
+let holdTimer = 0;
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  renderer.domElement.setPointerCapture(e.pointerId);
+  mouse.set(e.clientX / innerWidth - 0.5, e.clientY / innerHeight - 0.5);
+  drag = { x0: e.clientX, y0: e.clientY, t0: performance.now(), d0: deck.x, f0: flowRot.t, moved: false, held: false };
+  vel.length = 0;
+  // press and hold on the top card: bring it up close and look around inside the photo
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(() => {
+    if (drag && !drag.moved && mode.t < 0.5 && pick(e) === Math.round(deck.t)) { drag.held = true; zoom.t = 1; buzz(); }
+  }, 380);
+});
+addEventListener('pointermove', (e) => {
+  mouse.set(e.clientX / innerWidth - 0.5, e.clientY / innerHeight - 0.5);
+  if (!drag || drag.held) return;
+  const dx = e.clientX - drag.x0;
+  if (Math.abs(dx) > 6 || Math.abs(e.clientY - drag.y0) > 10) { drag.moved = true; clearTimeout(holdTimer); }
+  if (!drag.moved) return;
+  if (mode.t < 0.5) {
+    let x = drag.d0 - dx / (Math.min(innerWidth, 900) * 0.6);   // ~0.6 of the screen width = one card
+    if (x < 0) x *= 0.35; if (x > NC - 1) x = NC - 1 + (x - NC + 1) * 0.35;   // rubber band at the ends
+    deck.t = x; deck.x = lerp(deck.x, x, 0.6);                                  // follow the finger, slightly softened
+    vel.push([performance.now(), x]); if (vel.length > 6) vel.shift();
+    for (const c of cards) c.flipT = 0;
+  } else {
+    flowRot.t = drag.f0 - dx / innerWidth * NC * 0.7;
+  }
+});
+const release = (e) => {
+  clearTimeout(holdTimer);
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (d.held) { zoom.t = 0; return; }
+  if (!d.moved) { tap(pick(e)); return; }
+  if (mode.t < 0.5) {
+    // release velocity over the last ~100 ms of the drag (cards / s)
+    let v = 0;
+    const now = performance.now(), recent = vel.filter(([t]) => now - t < 120);
+    if (recent.length > 1) { const [t0, x0] = recent[0], [t1, x1] = recent[recent.length - 1]; v = (x1 - x0) / Math.max(8, t1 - t0) * 1000; }
+    // one card per gesture, like a real deck: past 30% of a card, or a flick, moves one; otherwise spring back
+    const s0 = Math.round(d.d0), off = deck.t - s0;
+    let tgt = s0;
+    if (off > 0.3 || v > 1.1) tgt = s0 + 1;
+    if (off < -0.3 || v < -1.1) tgt = s0 - 1;
+    if (Math.abs(off) > 1.5) tgt = Math.round(deck.t);         // a very long drag can carry further
+    deck.t = clamp(tgt, 0, NC - 1);
+    deck.v = clamp(v, -8, 8);
+    window.__lastRelease = { v: +v.toFixed(2), off: +off.toFixed(2), tgt };
+    if (tgt !== s0) buzz();
+  } else flowRot.t = Math.round(flowRot.t);
+};
+addEventListener('pointerup', release);
+addEventListener('pointercancel', release);
+function tap(i) {
+  if (mode.t > 0.5) { if (i >= 0) { deck.x = deck.t = i; deck.v = 0; flowRot.t = Math.round(flowRot.t); setMode(0); } return; }
+  if (i < 0) return;
+  const top = Math.round(deck.t);
+  if (i === top) cards[i].flipT = cards[i].flipT ? 0 : 1;
+  else { deck.t = i; for (const c of cards) c.flipT = 0; }
+}
+let wheelLock = 0;
+addEventListener('wheel', (e) => {
+  const dv = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+  if (performance.now() < wheelLock || Math.abs(dv) < 4) return;
+  wheelLock = performance.now() + 420;
+  if (mode.t < 0.5) { deck.t = clamp(Math.round(deck.t) + Math.sign(dv), 0, NC - 1); for (const c of cards) c.flipT = 0; }
+  else flowRot.t = Math.round(flowRot.t) + Math.sign(dv);
+}, { passive: true });
+addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight') { deck.t = clamp(Math.round(deck.t) + 1, 0, NC - 1); flowRot.t = Math.round(flowRot.t) + 1; }
+  if (e.key === 'ArrowLeft') { deck.t = clamp(Math.round(deck.t) - 1, 0, NC - 1); flowRot.t = Math.round(flowRot.t) - 1; }
+  if (e.key === ' ') { const c = cards[Math.round(deck.t)]; c.flipT = c.flipT ? 0 : 1; }
+  if (e.key === 'f' || e.key === 'F') setMode(mode.t > 0.5 ? 0 : 1);
+  if (e.key === 'Escape') setMode(0);
+});
+const bDeck = document.getElementById('mDeck'), bFlow = document.getElementById('mFlow');
+function setMode(m) {
+  if (m === 1) { flowRot.x = flowRot.t = Math.round(deck.t); for (const c of cards) c.flipT = 0; }
+  mode.t = m; bDeck.classList.toggle('on', !m); bFlow.classList.toggle('on', !!m);
+}
+bDeck.addEventListener('click', () => setMode(0));
+bFlow.addEventListener('click', () => setMode(1));
+if (Q.has('flip')) cards[Math.round(deck.t)].flipT = cards[Math.round(deck.t)].flip = 1;
+if (Q.has('flow')) { const m = +Q.get('flow'); setMode(m > 0.5 ? 1 : 0); mode.x = mode.t = m; }
+
+// ================================================================ frame
+const A = { pos: new THREE.Vector3(), rot: new THREE.Euler(), s: 1, op: 1 }, B = { pos: new THREE.Vector3(), rot: new THREE.Euler(), s: 1, op: 1 };
+const camDeck = new THREE.Vector3(), look = new THREE.Vector3();
+const cA = new THREE.Color(), cB = new THREE.Color(), cTmp = new THREE.Color();
+const countEl = document.getElementById('count');
+const _lc = new THREE.Vector3();
+let last = performance.now(), lastTop = Math.round(deck.t), frames = 0;
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; time += dt; frames++;
+  if (!drag) deck.step(dt); else { const x = deck.x; deck.step(dt); deck.v = (deck.x - x) / Math.max(dt, 1e-3); }
+  flowRot.t += dt * 0.08 * mode.x;                     // the ring keeps drifting
+  flowRot.step(dt); mode.step(dt); zoom.step(dt); stepSparks(dt);
+  mouseS.x = damp(mouseS.x, mouse.x, 4, dt); mouseS.y = damp(mouseS.y, mouse.y, 4, dt);
+  const M = clamp(mode.x, -0.2, 1.2), Z = clamp(zoom.x, 0, 1.15);
+
+  // a card thrown out (or pulled back) sheds a burst of light
+  if (!drag) {
+    const r = Math.round(deck.t);
+    if (r !== lastTop && M < 0.5) { if (r > lastTop) burst(cards[lastTop], 1); else burst(cards[r], -1); }
+    lastTop = r;
+  }
+
+  // camera (moves in while a card is held up close)
+  camDeck.set(mouseS.x * 0.8 * (1 - Z), -mouseS.y * 0.5 * (1 - Z), camZ * lerp(1, 0.64, Z));
+  cam.position.lerpVectors(camDeck, camFlow, ease(clamp(M)));
+  look.set(0, lerp(0.05, -0.4, ease(clamp(M))), lerp(0, -3, ease(clamp(M))));
+  cam.lookAt(look);
+
+  // cards
+  const intro = clamp(time / 1.6);
+  cards.forEach((c, i) => {
+    const d = i - deck.x;
+    deckPose(c, i, d, A);
+    const top = Math.max(0, 1 - Math.abs(d));
+    // motion: tilt and bow with the deck's velocity; hover tilt on the top card
+    const v = clamp(deck.v, -6, 6);
+    const reach = 1 + 1.3 * Z;   // held up close, the card follows the pointer much further
+    A.rot.y += -v * 0.06 * top + mouseS.x * 0.35 * reach * top * (1 - M);
+    A.rot.x += mouseS.y * 0.25 * reach * top * (1 - M);
+    A.rot.z += v * 0.025 * top;
+    A.pos.y += Math.sin(time * 1.1) * 0.05 * top; A.rot.x += Math.sin(time * 0.8 + 1) * 0.025 * top;   // the top card breathes
+    // flip about the vertical axis, lifting toward the camera halfway through
+    if (Math.abs(d) > 0.5) c.flipT = 0;
+    c.flip = damp(c.flip, c.flipT, 7, dt);
+    const fl = ease(clamp(c.flip));
+    A.rot.y += fl * Math.PI; A.pos.z += Math.sin(fl * Math.PI) * 1.4; A.pos.y += Math.sin(fl * Math.PI) * 0.15;
+    // intro: each card drops into the stack
+    const ki = clamp((time - 0.15 - (NC - 1 - i) * 0.09) / 0.9);
+    if (ki < 1) { const k = outBack(ki); A.pos.y -= (1 - k) * 9; A.rot.z += (1 - k) * (i % 2 ? 0.6 : -0.6); A.rot.x += (1 - k) * 0.8; }
+
+    // deck → flow, each card leaving at its own moment (the top card last)
+    flowPose(i, B);
+    const order = Math.abs(i - Math.round(deck.t));
+    const k = ease(clamp(M * 1.45 - order * 0.075));
+    _q.setFromEuler(_e.set(A.rot.x, A.rot.y, A.rot.z, 'YXZ'));
+    _q2.setFromEuler(_e.set(B.rot.x, B.rot.y, B.rot.z, 'YXZ'));
+    c.g.quaternion.slerpQuaternions(_q, _q2, k);
+    c.g.position.lerpVectors(A.pos, B.pos, k);
+    c.g.position.z += Math.sin(k * Math.PI) * 2.5;                         // swoop toward the lens on the way
+    c.g.rotateZ(Math.sin(k * Math.PI) * (i % 2 ? 0.5 : -0.5));
+    c.g.scale.setScalar(lerp(A.s, B.s, k));
+    const op = Math.max(lerp(A.op, B.op, k), smooth(0, 0.2, k));   // cards hidden deep in the stack solidify as they take off
+    c.mat.uniforms.uOpacity.value = op;
+    c.mat.uniforms.uBend.value = clamp(v * 0.09, -0.5, 0.5) * top * (1 - k) + Math.sin(k * Math.PI) * 0.3;
+    c.mat.uniforms.uLift.value = Math.sin(fl * Math.PI);
+    c.mat.uniforms.uDim.value = lerp(clamp(d) * 0.18 + (1 - top) * Z * 0.6, 0, k);
+    c.sh.material.opacity = 0.55 * op * (1 - k * 0.7) * intro;
+    c.g.visible = op > 0.01;
+    c.g.renderOrder = Math.round(100 - Math.abs(d) * 10);
+    // mirrored copy under the floor
+    c.g.updateMatrixWorld();
+    // where is the camera, seen from the card? (drives the parallax inside the photo)
+    _lc.copy(cam.position); c.mesh.worldToLocal(_lc); _lc.normalize();
+    let tx = _lc.x, ty = _lc.y; const tl = Math.hypot(tx, ty); if (tl > 0.38) { tx *= 0.38 / tl; ty *= 0.38 / tl; }
+    c.mat.uniforms.uTilt.value.set(tx, ty); c.rmat.uniforms.uTilt.value.set(tx, ty);
+    c.refl.matrix.multiplyMatrices(mirrorM, c.mesh.matrixWorld);
+    c.refl.matrixWorldNeedsUpdate = true;
+    const R = c.rmat.uniforms, U = c.mat.uniforms;
+    R.uBend.value = U.uBend.value; R.uLift.value = U.uLift.value; R.uDim.value = U.uDim.value;
+    R.uOpacity.value = op * k;
+    c.refl.visible = k > 0.01;
+  });
+  const fk = ease(clamp(M));
+  floorGlow.material.opacity = 0.16 * fk; orbit.material.opacity = 0.55 * fk; orbit2.material.opacity = 0.2 * fk;
+  orbit.rotation.z = time * 0.05; floorGlow.position.y = orbit.position.y = orbit2.position.y = FLOOR_Y - (1 - fk) * 1.5;
+
+  // colours follow the deck position
+  const i0 = clamp(Math.floor(deck.x), 0, NC - 1), i1 = clamp(i0 + 1, 0, NC - 1), f = clamp(deck.x - i0);
+  cA.set(CARDS[i0].bg[0]).lerp(cTmp.set(CARDS[i1].bg[0]), f);
+  cB.set(CARDS[i0].bg[1]).lerp(cTmp.set(CARDS[i1].bg[1]), f);
+  bgMat.uniforms.uA.value.copy(cA); bgMat.uniforms.uB.value.copy(cB);
+  bgMat.uniforms.uM.value.copy(mouseS); bgMat.uniforms.uT.value = time;
+  moteMat.uniforms.uC.value.set(CARDS[i0].accent).lerp(cTmp.set(CARDS[i1].accent), f).multiplyScalar(0.8);
+  moteMat.uniforms.uT.value = time; moteMat.uniforms.uFlow.value = clamp(M);
+  floorGlow.material.color.copy(moteMat.uniforms.uC.value); orbit.material.color.copy(moteMat.uniforms.uC.value).multiplyScalar(1.4); orbit2.material.color.copy(orbit.material.color);
+
+  // DOM type
+  CARDS.forEach((_, i) => {
+    const d = i - deck.x, a = (1 - smooth(0.2, 0.75, Math.abs(d))) * (1 - clamp(M) * 0.8);
+    bigK[i].style.opacity = (a * (1 - clamp(Z))).toFixed(3);
+    bigK[i].style.transform = `translate(${-d * 18}vw, -50%)`;
+    bigE[i].style.opacity = ((1 - smooth(0.15, 0.5, Math.abs(d))) * (1 - clamp(M)) * (1 - clamp(Z))).toFixed(3);
+    bigE[i].style.transform = `translateY(calc(-50% + ${d * 40}px))`;
+  });
+  const cur = clamp(Math.round(mode.t > 0.5 ? ((Math.round(flowRot.x) % NC) + NC) % NC : deck.x), 0, NC - 1);
+  countEl.innerHTML = `0${cur + 1} <span>/ 0${NC}</span>`;
+
+  renderer.clear();
+  renderer.render(bgScene, bgCam);
+  renderer.clearDepth();
+  renderer.render(scene, cam);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+// read-only state for automated interaction tests
+window.__cards = {
+  hits(x, y) { ndc.set(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1); ray.setFromCamera(ndc, cam);
+    return ray.intersectObjects(cards.map((c) => c.mesh)).map((h) => [h.object.userData.i, +h.distance.toFixed(2), cards[h.object.userData.i].g.visible]); },
+  get time() { return time; }, get frames() { return frames; },
+  get deck() { return deck.x; }, get target() { return deck.t; }, get mode() { return mode.x; },
+  get flips() { return cards.map((c) => c.flipT); }, get flow() { return flowRot.x; } };
+</script>
+</body>
+</html>

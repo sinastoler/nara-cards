@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kinetic Type Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0b0c; overflow: hidden; }
+  canvas { display: block; }
+  #vig { position: fixed; inset: 0; pointer-events: none;
+         background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.55) 100%); }
+  #ui { position: fixed; right: 16px; bottom: 14px; font: 12px "IBM Plex Mono", monospace;
+        color: #ece6dc; opacity: .55; user-select: none; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="vig"></div>
+<div id="ui">1 / 2 切换效果 · 空格 暂停 · A 自动轮播</div>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+await Promise.all([
+  document.fonts.load('900 100px Archivo'),
+  document.fonts.load('500 20px "IBM Plex Mono"'),
+]);
+
+// ------------------------------------------------------------------ utils
+const BPM = 132, BEAT = 60 / BPM;
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+const prog = (t, a, b, e = (x) => x) => e(clamp((t - a) / (b - a)));
+const outExpo = (x) => (x >= 1 ? 1 : 1 - Math.pow(2, -10 * x));
+const outCubic = (x) => 1 - Math.pow(1 - x, 3);
+const pulse = (t, t0, d) => (t < t0 ? 0 : Math.exp(-(t - t0) / d));
+const TAU = Math.PI * 2;
+let seed = 7;
+const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+
+const BG = new THREE.Color('#0b0b0c');
+const ORANGE = new THREE.Color('#ff5a1f'); // linear after ColorManagement
+const BONE = new THREE.Color('#ece6dc');
+const hdr = (c, s) => c.clone().multiplyScalar(s);
+
+// ------------------------------------------------------------------ renderer + overlay + post
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(BG);
+document.body.prepend(renderer.domElement);
+const MAX_ANISO = renderer.capabilities.getMaxAnisotropy();
+
+// 2D overlay canvas (HUD + effect 2's projected glyphs), composited before bloom so it glows too
+const ov = document.createElement('canvas');
+const octx = ov.getContext('2d');
+const ovTex = new THREE.CanvasTexture(ov);
+ovTex.colorSpace = THREE.SRGBColorSpace;
+ovTex.generateMipmaps = false; ovTex.minFilter = THREE.LinearFilter;
+const ovScene = new THREE.Scene();
+const ovCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+ovScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2),
+  new THREE.MeshBasicMaterial({ map: ovTex, transparent: true, depthTest: false, depthWrite: false })));
+
+const cam = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.1, 400);
+const composer = new EffectComposer(renderer);
+const rp = new RenderPass(new THREE.Scene(), cam);
+const rpOv = new RenderPass(ovScene, ovCam); rpOv.clear = false;
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.8, 0.55, 0.8);
+composer.addPass(rp); composer.addPass(rpOv); composer.addPass(bloom); composer.addPass(new OutputPass());
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix();
+  const v = renderer.getDrawingBufferSize(new THREE.Vector2());
+  ov.width = v.x; ov.height = v.y;
+}
+addEventListener('resize', resize); resize();
+
+// ================================================================== EFFECT 1 — TextPlane
+// Word -> canvas texture: R = filled glyphs, G = outline. A shader wipes from outline to fill by `prog`.
+const TEXT_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`;
+const TEXT_FS = `
+varying vec2 vUv;
+uniform sampler2D map;
+uniform float prog, dir, feather, u0, u1, aDim, opacity, flash, done;
+uniform vec3 cDim, cSung, cDone;
+void main(){
+  vec4 tx = texture2D(map, vUv);
+  float fill = tx.r, line = tx.g;
+  float u = clamp((vUv.x - u0) / max(1e-4, u1 - u0), 0.0, 1.0);
+  if (dir < 0.0) u = 1.0 - u;
+  float e = prog * (1.0 + feather);
+  float sung = prog <= 0.0 ? 0.0 : 1.0 - smoothstep(e - feather, e, u);
+  vec3 cs = mix(cSung, cDone, done) + flash * vec3(1.0, 0.42, 0.13);
+  vec3 rgb = fill * sung * cs + line * aDim * cDim * (1.0 - sung);
+  float a = fill * sung + line * aDim * (1.0 - sung);
+  gl_FragColor = vec4(rgb, a) * opacity;
+}`;
+
+class TextPlane {
+  constructor(text, { capH = 2, px = 280, outline = 0.022, maxW = Infinity } = {}) {
+    const fnt = `900 ${px}px Archivo`;
+    const m0 = document.createElement('canvas').getContext('2d');
+    m0.font = fnt;
+    const m = m0.measureText(text), cap = m0.measureText('H').actualBoundingBoxAscent;
+    const asc = Math.max(m.actualBoundingBoxAscent, cap), desc = Math.max(0, m.actualBoundingBoxDescent);
+    const inkL = -m.actualBoundingBoxLeft, inkR = m.actualBoundingBoxRight;
+    const ol = outline * px, pad = Math.ceil(ol * 2 + px * 0.04);
+    const W = Math.ceil(inkR - inkL + pad * 2), H = Math.ceil(asc + desc + pad * 2);
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const c = cv.getContext('2d');
+    c.fillStyle = '#000'; c.fillRect(0, 0, W, H);
+    c.font = fnt; c.textBaseline = 'alphabetic';
+    const bx = pad - inkL, by = pad + asc;
+    c.globalCompositeOperation = 'lighter';
+    c.fillStyle = '#f00'; c.fillText(text, bx, by);
+    c.strokeStyle = '#0f0'; c.lineWidth = ol; c.lineJoin = 'round'; c.strokeText(text, bx, by);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.NoColorSpace; tex.anisotropy = MAX_ANISO;
+    let s = capH / cap;                               // world units per texture px
+    if ((inkR - inkL) * s > maxW) s = maxW / (inkR - inkL);
+    this.w = (inkR - inkL) * s;
+    const gw = W * s, gh = H * s;
+    const geo = new THREE.PlaneGeometry(gw, gh);
+    const axPx = pad + (inkR - inkL) / 2, ayPx = by - cap * 0.5;    // anchor: centre of the cap box
+    geo.translate(gw / 2 - axPx * s, -(gh / 2 - ayPx * s), 0);
+    this.mat = new THREE.ShaderMaterial({
+      vertexShader: TEXT_VS, fragmentShader: TEXT_FS,
+      uniforms: {
+        map: { value: tex }, prog: { value: 0 }, dir: { value: 1 }, feather: { value: 0.06 },
+        u0: { value: pad / W }, u1: { value: (W - pad) / W },
+        aDim: { value: 0.45 }, opacity: { value: 1 }, flash: { value: 0 }, done: { value: 0 },
+        cDim: { value: BONE.clone() }, cSung: { value: hdr(ORANGE, 2.2) }, cDone: { value: BONE.clone() },
+      },
+      transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+      blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+    });
+    this.mesh = new THREE.Mesh(geo, this.mat);
+    this.mesh.renderOrder = 10;
+  }
+  set(o) { for (const k in o) this.mat.uniforms[k].value = o[k]; }
+}
+
+// ------------------------------------------------------------------ the stack scene
+const HX = 6, HY = 3, HZ = 1.4, P = 7.6, MX = 0.6, RX = -4.6, BX0 = -2.5, BX1 = 3.7;
+const sceneA = new THREE.Scene();
+sceneA.fog = new THREE.Fog(BG, 16, 52);
+
+function blockFaceTexture() {
+  const S = 110, cv = document.createElement('canvas');
+  cv.width = HX * 2 * S; cv.height = HY * 2 * S;
+  const c = cv.getContext('2d');
+  const X = (x) => (x + HX) * S, Y = (y) => (HY - y) * S;
+  c.strokeStyle = c.fillStyle = 'rgba(236,230,220,0.95)';
+  c.lineWidth = 3; c.lineJoin = c.lineCap = 'round';
+  const sketch = (fn) => { fn(0, 0); c.save(); c.globalAlpha = 0.45; fn(2.5, 2); c.restore(); }; // double "pen" line
+  const rrect = (x0, y0, x1, y1, r) => sketch((dx, dy) => {
+    c.beginPath(); c.roundRect(X(x0) + dx, Y(y1) + dy, (x1 - x0) * S, (y1 - y0) * S, r); c.stroke();
+  });
+  const label = (txt, x, y, h, align = 'center') => sketch((dx, dy) => {
+    c.font = `500 ${h * S}px "IBM Plex Mono"`; c.textAlign = align; c.textBaseline = 'middle';
+    c.lineWidth = 2.2; c.strokeText(txt, X(x) + dx, Y(y) + dy); c.lineWidth = 3;
+  });
+  const rows = [['MULTI-HEAD ATTENTION', -2.3, -1.1], ['ADD & NORM', -0.85, -0.25], ['FEED FORWARD', 0.0, 1.05], ['ADD & NORM', 1.3, 1.9]];
+  for (const [txt, y0, y1] of rows) { rrect(BX0, y0, BX1, y1, 18); label(txt, (BX0 + BX1) / 2, (y0 + y1) / 2, (y1 - y0) * 0.55); }
+  // residual bypass: rail on the left, taps into each ADD & NORM through a ⊕
+  sketch((dx, dy) => {
+    c.beginPath(); c.moveTo(X(RX) + dx, Y(-2.8) + dy); c.lineTo(X(RX) + dx, Y(1.6) + dy); c.lineTo(X(BX0) + dx, Y(1.6) + dy); c.stroke();
+    c.beginPath(); c.moveTo(X(RX) + dx, Y(-0.55) + dy); c.lineTo(X(BX0) + dx, Y(-0.55) + dy); c.stroke();
+    for (const y of [-0.55, 1.6]) {
+      c.beginPath(); c.arc(X(-3.5) + dx, Y(y) + dy, 0.24 * S, 0, TAU); c.stroke();
+      c.beginPath(); c.moveTo(X(-3.5) - 0.24 * S + dx, Y(y) + dy); c.lineTo(X(-3.5) + 0.24 * S + dx, Y(y) + dy);
+      c.moveTo(X(-3.5) + dx, Y(y) - 0.24 * S + dy); c.lineTo(X(-3.5) + dx, Y(y) + 0.24 * S + dy); c.stroke();
+    }
+  });
+  label('TRANSFORMER BLOCK', -5.4, 2.45, 0.5, 'left');
+  label('PRE-LN', 4.0, 1.6, 0.26, 'left'); label('FFN 4x', 4.0, 1.25, 0.26, 'left');
+  label('HEADS 96', 4.0, -1.6, 0.26, 'left'); label('d=12288', 4.0, -1.95, 0.26, 'left');
+  for (const [x, y] of [[-5.5, -2.6], [5.5, 2.6], [5.5, -2.6]]) label('+', x, y, 0.45);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = MAX_ANISO;
+  return tex;
+}
+
+function chamfer(hx, hy, ch, z) {
+  return [[-hx + ch, hy], [hx - ch, hy], [hx, hy - ch], [hx, -hy + ch], [hx - ch, -hy], [-hx + ch, -hy], [-hx, -hy + ch], [-hx, hy - ch]]
+    .map(([x, y]) => new THREE.Vector3(x, y, z));
+}
+function blockEdges() {
+  const pts = [];
+  const ring = (r) => r.forEach((p, i) => pts.push(p, r[(i + 1) % r.length]));
+  const f = chamfer(HX, HY, 0.6, HZ), b = chamfer(HX, HY, 0.6, -HZ), fi = chamfer(HX - 0.25, HY - 0.25, 0.5, HZ);
+  ring(f); ring(b); ring(fi);
+  f.forEach((p, i) => pts.push(p, b[i]));
+  return new THREE.BufferGeometry().setFromPoints(pts);
+}
+
+const faceTex = blockFaceTexture();
+const edgeGeo = blockEdges();
+const edgeMat = new THREE.LineBasicMaterial({ color: hdr(BONE, 1.0) });
+const faceMat = new THREE.MeshBasicMaterial({ map: faceTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, color: hdr(BONE, 0.8) });
+const bodyMat = new THREE.MeshBasicMaterial({ color: BG, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+const bodyGeo = new THREE.BoxGeometry(HX * 2 - 0.02, HY * 2 - 0.02, HZ * 2 - 0.02);
+const faceGeo = new THREE.PlaneGeometry(HX * 2, HY * 2);
+for (let i = -2; i < 14; i++) {
+  const g = new THREE.Group(); g.position.y = -i * P;
+  g.add(new THREE.Mesh(bodyGeo, bodyMat));
+  g.add(new THREE.LineSegments(edgeGeo, edgeMat));
+  const face = new THREE.Mesh(faceGeo, faceMat); face.position.z = HZ + 0.01; g.add(face);
+  sceneA.add(g);
+}
+// the hot main data path running through every block
+sceneA.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(MX, 40, HZ + 0.25), new THREE.Vector3(MX, -140, HZ + 0.25)]),
+  new THREE.LineBasicMaterial({ color: hdr(ORANGE, 2.5) })));
+
+const sparkTex = (() => {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const c = cv.getContext('2d'), g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.2, 'rgba(255,200,150,.6)'); g.addColorStop(1, 'rgba(255,120,40,0)');
+  c.fillStyle = g; c.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(cv);
+})();
+const spark = new THREE.Sprite(new THREE.SpriteMaterial({ map: sparkTex, color: hdr(ORANGE, 4), blending: THREE.AdditiveBlending, depthTest: false, transparent: true }));
+spark.renderOrder = 11;
+sceneA.add(spark);
+
+// lyric: one word per block, camera drops one block per beat
+const A_WORDS = [
+  { w: 'JUST', b: 1, d: 0.8 },
+  { w: 'TRANSFORMERS', b: 2, d: 2.7, echo: [3, 4] },
+  { w: 'ALL THE', b: 5, d: 0.9 },
+  { w: 'WAY!', b: 6, d: 2.2 },
+];
+const A_LEN = 10 * BEAT;
+const aPlanes = [];
+for (const wd of A_WORDS) {
+  wd.start = wd.b * BEAT; wd.end = wd.start + wd.d * BEAT;
+  const mk = (block, echo) => {
+    const tp = new TextPlane(wd.w, { capH: 2.3, maxW: 13.5 });
+    tp.mesh.position.set(0, -block * P - 0.1, HZ + 0.55);
+    sceneA.add(tp.mesh);
+    aPlanes.push({ tp, wd, echo });
+  };
+  mk(wd.b, false);
+  for (const e of wd.echo ?? []) mk(e, true);
+}
+
+function updateA(t) {
+  // fall: snap one block per beat (ease out expo), slight lead so the block lands on the beat
+  const cb = t / BEAT + 0.12, i = Math.floor(cb), f = cb - i;
+  const stopAt = 6;
+  const pos = i >= stopAt ? stopAt : i - 1 + outExpo(clamp(f / 0.3));
+  const camY = -pos * P;
+  const sway = Math.sin(t * 0.7) * 0.6;
+  const tgt = new THREE.Vector3(0.6, camY - 0.4, 0);
+  cam.position.set(tgt.x + 5.5 + sway, tgt.y + 4.6, 16.5);
+  cam.fov = 34 - 1.6 * pulse(t, Math.floor(t / BEAT) * BEAT, 0.09);
+  cam.updateProjectionMatrix();
+  cam.lookAt(tgt);
+  cam.rotateZ(-0.13 + 0.03 * Math.sin(t * 0.9));
+
+  spark.position.set(MX, camY + HY + 2.6 + 0.2 * Math.sin(t * 31), HZ + 0.25);
+  spark.scale.setScalar(0.7 + 0.4 * Math.random());
+
+  for (const { tp, wd, echo } of aPlanes) {
+    const p = clamp((t - wd.start) / (wd.end - wd.start));
+    const vis = echo ? smooth(wd.start - 0.2, wd.start + 0.3, t) : smooth(wd.start - 0.42, wd.start - 0.05, t);
+    tp.set({
+      opacity: vis * (echo ? 0.7 : 1),
+      prog: echo ? 0 : p,
+      done: !echo && t >= wd.end + 0.03 ? 1 : 0,
+      aDim: echo ? 0.3 : 0.45,
+      flash: echo ? 0 : pulse(t, wd.start, 0.07) * 1.4,
+    });
+  }
+
+  // HUD
+  const d = ov.height / 900;
+  octx.textBaseline = 'alphabetic';
+  octx.fillStyle = 'rgba(236,230,220,.75)';
+  octx.font = `500 ${11 * d}px "IBM Plex Mono"`; octx.fillText('DEPTH', 70 * d, 80 * d);
+  octx.font = `500 ${26 * d}px "IBM Plex Mono"`; octx.fillText(`L.${String(Math.round(pos) + 1).padStart(3, '0')} / ∞`, 68 * d, 112 * d);
+  octx.font = `400 ${9 * d}px "IBM Plex Mono"`; octx.fillText('N × transformer block, N → ∞', 70 * d, 132 * d);
+  octx.fillStyle = '#ff5a1f'; octx.font = `500 ${11 * d}px "IBM Plex Mono"`; octx.fillText('P(DOOM) 0.83', 70 * d, 162 * d);
+}
+
+// ================================================================== EFFECT 2 — text riding a 3D orbit
+const sceneB = new THREE.Scene();
+sceneB.fog = new THREE.Fog(BG, 22, 60);
+const well = (r) => -9 / (1 + (r * r) / 3.5);
+const twist = (r) => 1.8 * Math.exp(-(r * r) / 40);
+const sheetPt = (x, z) => {
+  const r = Math.hypot(x, z), a = twist(r), ca = Math.cos(a), sa = Math.sin(a);
+  return new THREE.Vector3(x * ca - z * sa, well(r), x * sa + z * ca);
+};
+{ // spacetime grid sheet
+  const pts = [], GN = 22, STEP = 1.6, SUB = 0.25;
+  for (let k = -GN; k <= GN; k += STEP) for (let u = -GN; u < GN; u += SUB) {
+    pts.push(sheetPt(k, u), sheetPt(k, u + SUB));
+    pts.push(sheetPt(u, k), sheetPt(u + SUB, k));
+  }
+  sceneB.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: hdr(BONE, 0.3), transparent: true, opacity: 0.8 })));
+}
+// streamlines spiralling into the well
+const NS = 2200, TR = 10;
+const streams = Array.from({ length: NS }, () => ({ th0: rnd() * TAU, s0: rnd(), rmax: 5 + rnd() * 17, v: 0.035 + rnd() * 0.04, W: 6 + rnd() * 3 }));
+const sPos = new Float32Array(NS * TR * 2 * 3), sCol = new Float32Array(NS * TR * 2 * 3);
+const sGeo = new THREE.BufferGeometry();
+sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
+sGeo.setAttribute('color', new THREE.BufferAttribute(sCol, 3));
+sceneB.add(new THREE.LineSegments(sGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })));
+
+function updateStreams(t) {
+  const F = t * (1 + 0.09 * t); // the flow speeds up as the line goes on ("accelerating")
+  let o = 0;
+  const pt = (st, s) => {
+    const r = 0.3 + (st.rmax - 0.3) * Math.pow(1 - s, 1.25);
+    const th = st.th0 + st.W / (r + 0.45);
+    return [r * Math.cos(th), well(r) + 0.03, r * Math.sin(th), r];
+  };
+  for (const st of streams) {
+    const s = (st.s0 + st.v * F) % 1;
+    let prev = pt(st, s);
+    for (let j = 0; j < TR; j++) {
+      const sj = s - (j + 1) * 0.007;
+      const cur = sj < 0 ? prev : pt(st, sj);
+      const r = prev[3];
+      const I = (1 - j / TR) * smooth(0, 0.06, s) * smooth(0.3, 1.4, r);
+      const hot = smooth(5, 1.0, r);
+      const k = I * lerp(0.4, 0.75, hot);
+      const cr = lerp(BONE.r * 0.6, ORANGE.r * 1.2, hot) * k, cg = lerp(BONE.g * 0.6, ORANGE.g * 1.2, hot) * k, cb = lerp(BONE.b * 0.6, ORANGE.b * 1.2, hot) * k;
+      sPos.set([prev[0], prev[1], prev[2], cur[0], cur[1], cur[2]], o);
+      sCol.set([cr, cg, cb, cr, cg, cb], o);
+      o += 6; prev = cur;
+    }
+  }
+  sGeo.attributes.position.needsUpdate = true;
+  sGeo.attributes.color.needsUpdate = true;
+}
+
+const B_WORDS = [
+  { w: 'AND', b: 1, d: 0.4 },
+  { w: "YOU'RE", b: 1.5, d: 0.8 },
+  { w: 'OPTIMIZING,', b: 2.5, d: 2.6 },
+  { w: 'ACCELERATING,', b: 5.5, d: 2.9 },
+];
+B_WORDS.forEach((w) => { w.start = w.b * BEAT; w.end = w.start + w.d * BEAT; });
+const B_LEN = 11 * BEAT;
+const glyphW = new Map();
+const gw100 = (ch) => {
+  if (!glyphW.has(ch)) { octx.font = '900 100px Archivo'; glyphW.set(ch, octx.measureText(ch).width); }
+  return glyphW.get(ch);
+};
+
+const _v = new THREE.Vector4(), _vp = new THREE.Matrix4();
+function proj(x, y, z) {
+  _v.set(x, y, z, 1).applyMatrix4(_vp);
+  if (_v.w <= 0.05) return null;
+  const P11 = cam.projectionMatrix.elements[5];
+  return { x: (_v.x / _v.w * 0.5 + 0.5) * ov.width, y: (0.5 - _v.y / _v.w * 0.5) * ov.height, s: 0.5 * ov.height * P11 / _v.w };
+}
+
+function drawRing(t) {
+  const on = prog(t, B_WORDS[0].start - 0.3, B_WORDS[0].start) * (1 - prog(t, B_LEN - 0.4, B_LEN));
+  if (on <= 0) return;
+  const R = 6.2, size = 1.25, lift = 0.15;
+  // 1) lay the line out along its arc length; long words stretch from 62% to 125% width as sung
+  const glyphs = [];
+  B_WORDS.forEach((w, wi) => {
+    const stretch = wi >= 2, n = w.w.length;
+    for (let j = 0; j < n; j++) {
+      const tg = lerp(w.start, w.end, j / n);
+      const k = stretch ? prog(t, tg, tg + 0.35, outCubic) : 1;
+      const sf = stretch ? lerp(0.62, 1.25, k) : 1;
+      const ch = w.w[j];
+      glyphs.push({ ch, tg, adv: gw100(ch) / 100 * size * sf });
+    }
+    if (wi < B_WORDS.length - 1) glyphs.push({ ch: ' ', tg: w.end, adv: size * 0.42 });
+  });
+  const pos = []; let s = 0;
+  for (const g of glyphs) { pos.push(s); s += g.adv; }
+  let head = 0;
+  glyphs.forEach((g, i) => { if (t >= g.tg) head = pos[i] + g.adv * clamp((t - g.tg) / 0.12); });
+  // 2) rotate the ring so the glyph being sung sits just right of the camera's nearest point
+  const front = Math.atan2(-cam.position.z, cam.position.x);
+  const phOff = front + 0.3 - head / R;
+  const y0 = well(R) + lift;
+  _vp.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+  octx.save();
+  octx.textBaseline = 'alphabetic'; octx.lineJoin = 'round';
+  glyphs.forEach((g, i) => {
+    if (g.ch === ' ') return;
+    // 3) project the glyph's left/right edge on the ring; draw it in 2D between those two points
+    const ph0 = phOff + pos[i] / R, ph1 = phOff + (pos[i] + g.adv) / R;
+    const qa = proj(R * Math.cos(ph0), y0, -R * Math.sin(ph0));
+    const qb = proj(R * Math.cos(ph1), y0, -R * Math.sin(ph1));
+    if (!qa || !qb || qb.x <= qa.x) return; // back of the ring
+    const adv = Math.hypot(qb.x - qa.x, qb.y - qa.y);
+    const ang = Math.atan2(qb.y - qa.y, qb.x - qa.x);
+    const hpx = 0.5 * (qa.s + qb.s) * size; // perspective glyph height
+    const gw = gw100(g.ch);
+    const comp = adv / Math.max(1, (gw * hpx) / 100); // how foreshortened it is
+    const behind = head - pos[i];
+    const a = on * smooth(0.28, 0.62, comp) * (1 - smooth(0.62, 0.8, behind / (TAU * R)));
+    if (a <= 0.003) return;
+    octx.save();
+    octx.translate(qa.x, qa.y); octx.rotate(ang);
+    octx.scale(adv / Math.max(1, gw), hpx / 100);
+    octx.font = '900 100px Archivo';
+    if (t < g.tg) {
+      octx.strokeStyle = `rgba(236,230,220,${0.45 * a})`; octx.lineWidth = 2.5 * 100 / hpx;
+      octx.strokeText(g.ch, 0, 0);
+    } else {
+      const heat = Math.exp(-(t - g.tg) / 0.3);
+      octx.fillStyle = heat > 0.03 ? `rgba(255,${Math.round(lerp(233, 150, heat))},${Math.round(lerp(223, 80, heat))},${a})` : `rgba(236,230,220,${0.96 * a})`;
+      octx.fillText(g.ch, 0, 0);
+    }
+    octx.restore();
+  });
+  octx.restore();
+}
+
+function updateB(t) {
+  const tgt = new THREE.Vector3(0, -2.2, 0);
+  const az = 0.5 + 0.16 * t, el = 0.8 - 0.02 * t, dist = 19 - 0.35 * t;
+  cam.position.set(tgt.x + dist * Math.cos(el) * Math.cos(az), tgt.y + dist * Math.sin(el), tgt.z - dist * Math.cos(el) * Math.sin(az));
+  cam.fov = 38 - 1.8 * pulse(t, Math.floor(t / BEAT) * BEAT, 0.09);
+  cam.updateProjectionMatrix();
+  cam.lookAt(tgt);
+  cam.rotateZ(0.08 + 0.02 * t);
+  cam.updateMatrixWorld();
+  updateStreams(t);
+  drawRing(t);
+}
+
+// ================================================================== loop
+let mode = 0, auto = true, paused = false, last = performance.now(), tl = 0;
+const setMode = (m) => { mode = m; tl = 0; };
+addEventListener('keydown', (e) => {
+  if (e.key === '1') { auto = false; setMode(0); }
+  if (e.key === '2') { auto = false; setMode(1); }
+  if (e.key === 'a' || e.key === 'A') auto = true;
+  if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
+});
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (!paused) tl += dt;
+  const len = mode === 0 ? A_LEN : B_LEN;
+  if (tl >= len) { tl = 0; if (auto) mode = 1 - mode; }
+  octx.clearRect(0, 0, ov.width, ov.height);
+  if (mode === 0) {
+    rp.scene = sceneA; bloom.strength = 0.75; bloom.threshold = 0.85;
+    updateA(tl);
+  } else {
+    rp.scene = sceneB; bloom.strength = 0.55; bloom.threshold = 0.8;
+    updateB(tl);
+  }
+  ovTex.needsUpdate = true;
+  composer.render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
