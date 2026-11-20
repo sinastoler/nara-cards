@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Sealed Card · 封印卡</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@600;900&family=Inter:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: #08060d; color: #f1e6d4; font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: pointer; }
+  #title { position: fixed; left: 28px; top: 24px; pointer-events: none; }
+  #title b { display: block; font: 900 22px "Noto Serif JP", serif; letter-spacing: .12em;
+    background: linear-gradient(100deg, #ffe0a0, #ff8fb4 60%, #c9a2ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #title span { font-size: 11px; letter-spacing: .3em; opacity: .5; }
+  #hint { position: fixed; left: 0; right: 0; bottom: 26px; text-align: center; font-size: 13px; letter-spacing: .1em; opacity: .62; pointer-events: none; transition: opacity .6s; }
+  body.noui #title, body.noui #hint { display: none; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="title"><b>封印の鍵</b><span>SEALED CARD</span></div>
+<div id="hint">点击卡片 · 解除封印</div>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const Q = new URLSearchParams(location.search);
+if (Q.has('noui')) document.body.classList.add('noui');
+const TAU = Math.PI * 2;
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+const outCubic = (t) => 1 - (1 - t) ** 3;
+const inOutCubic = (t) => (t < .5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+const rng = (s) => () => { s |= 0; s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+
+/* ───────── card geometry: a lacquered frame with an arched window ───────── */
+const W = 2.6, H = 3.8, R = .14, WX = .98, YB = -1.3, YA = .6, DEPTH = 1.6, FT = .05, BV = .014;
+function roundRect(p, w, h, r) {
+  p.moveTo(-w / 2 + r, -h / 2); p.lineTo(w / 2 - r, -h / 2); p.quadraticCurveTo(w / 2, -h / 2, w / 2, -h / 2 + r);
+  p.lineTo(w / 2, h / 2 - r); p.quadraticCurveTo(w / 2, h / 2, w / 2 - r, h / 2); p.lineTo(-w / 2 + r, h / 2);
+  p.quadraticCurveTo(-w / 2, h / 2, -w / 2, h / 2 - r); p.lineTo(-w / 2, -h / 2 + r); p.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2);
+  return p;
+}
+function arch(p, i = 0) {
+  const x = WX - i;
+  p.moveTo(-x, YB + i); p.lineTo(x, YB + i); p.lineTo(x, YA); p.absarc(0, YA, x, 0, Math.PI, false); p.lineTo(-x, YB + i);
+  return p;
+}
+
+/* ───────── canvas art for the card face (colour + metal/roughness masks) ───────── */
+const S = 400, TW = W * S, TH = H * S;
+const px = (x) => (x + W / 2) * S, py = (y) => (H / 2 - y) * S;
+function archCanvas(c, i) {
+  const x = WX - i;
+  c.beginPath(); c.moveTo(px(-x), py(YB + i)); c.lineTo(px(x), py(YB + i)); c.lineTo(px(x), py(YA));
+  c.arc(px(0), py(YA), x * S, 0, -Math.PI, true); c.closePath();
+}
+function star4(c, x, y, r) {
+  c.beginPath();
+  for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4 - Math.PI / 2, rr = k % 2 ? r * .32 : r; c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
+  c.closePath();
+}
+let released = false;
+function drawFace(c, mode) {
+  const color = mode === 'color';
+  const LAC = color ? null : 'rgb(0,95,0)', GOLD = color ? null : 'rgb(0,80,175)';
+  if (color) {
+    const g = c.createLinearGradient(0, 0, TW, TH);
+    g.addColorStop(0, '#c2301f'); g.addColorStop(.5, '#9a1d14'); g.addColorStop(1, '#6e120d');
+    c.fillStyle = g;
+  } else c.fillStyle = LAC;
+  c.fillRect(0, 0, TW, TH);
+  const gold = (() => {
+    if (!color) return GOLD;
+    const g = c.createLinearGradient(0, 0, TW, TH);
+    ['#9b7431', '#ffe7a8', '#c3943f', '#fff3cc', '#a8802f', '#f4d68d'].forEach((s, i, a) => g.addColorStop(i / (a.length - 1), s));
+    return g;
+  })();
+  if (color) {                                   // faint seigaiha waves in the lacquer
+    c.strokeStyle = 'rgba(255,190,140,.07)'; c.lineWidth = 3;
+    for (let y = 0; y < TH + 80; y += 46) for (let x = (y / 46) % 2 ? 46 : 0; x < TW + 92; x += 92)
+      for (let r = 44; r > 8; r -= 12) { c.beginPath(); c.arc(x, y, r, Math.PI, 0); c.stroke(); }
+  }
+  c.strokeStyle = gold; c.fillStyle = gold; c.lineJoin = 'round';
+  c.lineWidth = 16; c.beginPath(); c.roundRect(26, 26, TW - 52, TH - 52, 40); c.stroke();
+  c.lineWidth = 3; c.beginPath(); c.roundRect(52, 52, TW - 104, TH - 104, 28); c.stroke();
+  c.lineWidth = 12; archCanvas(c, -.05); c.stroke();
+  c.lineWidth = 3; archCanvas(c, -.11); c.stroke();
+  // rays fanning from the arch into the spandrels
+  c.save(); c.beginPath(); c.rect(52, 52, TW - 104, py(YA) - 52); archCanvas(c, -.13); c.clip('evenodd');
+  c.lineWidth = 2.5;
+  for (let k = 0; k <= 26; k++) { const a = Math.PI + k / 26 * Math.PI; c.beginPath(); c.moveTo(px(0) + Math.cos(a) * (WX + .14) * S, py(YA) + Math.sin(a) * (WX + .14) * S); c.lineTo(px(0) + Math.cos(a) * 3 * S, py(YA) + Math.sin(a) * 3 * S); c.stroke(); }
+  c.restore();
+  // crest at the top
+  c.fillStyle = color ? '#6e120d' : LAC; c.beginPath(); c.arc(px(0), py(1.72), 62, 0, TAU); c.fill();
+  c.fillStyle = gold; c.lineWidth = 6; c.beginPath(); c.arc(px(0), py(1.72), 62, 0, TAU); c.stroke();
+  c.font = '900 70px "Noto Serif JP", serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('鍵', px(0), py(1.72) + 4);
+  for (const [x, y] of [[.25, 1.55], [-.25, 1.55]]) { star4(c, px(x * 4.2), py(y + .17), 22); c.fill(); }
+  // stars in the lower corners of the window frame
+  for (const [x, y] of [[-1.13, -1.42], [1.13, -1.42], [-1.13, .2], [1.13, .2]]) { star4(c, px(x), py(y), 34); c.fill(); }
+  // name plate
+  c.fillStyle = color ? 'rgba(28,4,8,.82)' : LAC; c.beginPath(); c.roundRect(px(-1.05), py(-1.44), 2.1 * S, .38 * S, 18); c.fill();
+  c.fillStyle = gold; c.lineWidth = 4; c.stroke();
+  c.font = '900 72px "Noto Serif JP", serif'; c.fillText(released ? '解　放' : '封　印', px(0), py(-1.6) + 4);
+  c.font = '700 26px Inter, sans-serif'; c.fillText(released ? 'THE  KEY  ·  RELEASED' : 'THE  KEY  ·  SEALED', px(0), py(-1.765));
+}
+function drawBack(c) {
+  const g = c.createLinearGradient(0, 0, TW, TH); g.addColorStop(0, '#1d1238'); g.addColorStop(1, '#3a0f22');
+  c.fillStyle = g; c.fillRect(0, 0, TW, TH);
+  const gold = c.createLinearGradient(0, 0, TW, TH); ['#9b7431', '#ffe7a8', '#c3943f', '#f4d68d'].forEach((s, i, a) => gold.addColorStop(i / (a.length - 1), s));
+  c.strokeStyle = gold; c.fillStyle = gold; c.lineWidth = 16; c.beginPath(); c.roundRect(26, 26, TW - 52, TH - 52, 40); c.stroke();
+  c.drawImage(circleCanvas, TW / 2 - 440, TH / 2 - 440, 880, 880);
+  c.font = '900 150px "Noto Serif JP", serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('封', TW / 2, TH / 2 + 8);
+}
+// a magic circle (original design): rings, a seven-point star and words of Nara around the edge
+const circleCanvas = (() => {
+  const s = 1024, c = mk(s, s), x = c.getContext('2d'), m = s / 2;
+  x.strokeStyle = x.fillStyle = '#ffe9c4'; x.translate(m, m);
+  const ring = (r, w) => { x.lineWidth = w; x.beginPath(); x.arc(0, 0, r, 0, TAU); x.stroke(); };
+  ring(500, 6); ring(470, 2); ring(360, 4); ring(340, 1.5); ring(150, 3);
+  for (let k = 0; k < 120; k++) { const a = k / 120 * TAU, l = k % 5 ? 10 : 22; x.lineWidth = 2; x.beginPath(); x.moveTo(Math.cos(a) * 470, Math.sin(a) * 470); x.lineTo(Math.cos(a) * (470 - l), Math.sin(a) * (470 - l)); x.stroke(); }
+  x.lineWidth = 3; x.beginPath();
+  for (let k = 0; k <= 7; k++) { const a = (k * 3 % 7) / 7 * TAU - Math.PI / 2; x.lineTo(Math.cos(a) * 340, Math.sin(a) * 340); }
+  x.stroke();
+  x.beginPath(); for (let k = 0; k <= 7; k++) { const a = k / 7 * TAU - Math.PI / 2; x.lineTo(Math.cos(a) * 340, Math.sin(a) * 340); } x.stroke();
+  const words = '鹿 鍵 春 日 若 草 月 星 光 風 森 灯 花 夢'.split(' ');
+  x.font = '600 44px "Noto Serif JP", serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  words.forEach((w, i) => { x.save(); x.rotate(i / words.length * TAU); x.fillText(w, 0, -412); x.restore(); });
+  for (let k = 0; k < 7; k++) { const a = k / 7 * TAU - Math.PI / 2; x.beginPath(); x.arc(Math.cos(a) * 250, Math.sin(a) * 250, 26, 0, TAU); x.lineWidth = 2.5; x.stroke(); }
+  return c;
+})();
+
+/* ───────── renderer, composer with a stencil buffer ───────── */
+const canvas = document.getElementById('c');
+const coarse = matchMedia('(pointer: coarse)').matches;
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, stencil: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.6 : 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#08060d');
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(renderer), .04).texture;
+const camera = new THREE.PerspectiveCamera(32, 1, .1, 100);
+const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, stencilBuffer: true, samples: 4 });
+const composer = new EffectComposer(renderer, rt);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(4, 4), .5, .45, .95);
+composer.addPass(bloom); composer.addPass(new OutputPass());
+
+// stencil helpers: the window writes 1, everything inside the card only draws where the stencil is 1
+const inside = (m, on = true) => {
+  m.stencilWrite = on; m.stencilRef = 1; m.stencilFunc = THREE.EqualStencilFunc;
+  m.stencilZPass = m.stencilFail = m.stencilZFail = THREE.KeepStencilOp; return m;
+};
+
+const card = new THREE.Group(); scene.add(card);
+const faceC = mk(TW, TH), faceMR = mk(TW, TH), backC = mk(TW, TH);
+const texOf = (c, srgb) => { const t = new THREE.CanvasTexture(c); t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = 8; t.repeat.set(1 / W, 1 / H); t.offset.set(.5, .5); return t; };
+const faceTex = texOf(faceC, true), mrTex = texOf(faceMR, false), backTex = texOf(backC, true);
+const outer = roundRect(new THREE.Shape(), W, H, R); outer.holes.push(arch(new THREE.Path()));
+const frameGeo = new THREE.ExtrudeGeometry(outer, { depth: FT, bevelEnabled: true, bevelThickness: BV, bevelSize: BV, bevelSegments: 3, curveSegments: 48 });
+const faceMat = new THREE.MeshStandardMaterial({ map: faceTex, metalnessMap: mrTex, roughnessMap: mrTex, metalness: 1, roughness: 1, envMapIntensity: .5 });
+const edgeMat = new THREE.MeshStandardMaterial({ color: '#e9bd62', metalness: 1, roughness: .28 });
+const frame = new THREE.Mesh(frameGeo, [faceMat, edgeMat]);
+frame.position.z = -(FT + BV); card.add(frame);
+const backShape = roundRect(new THREE.Shape(), W, H, R);
+const back = new THREE.Mesh(new THREE.ShapeGeometry(backShape, 12), new THREE.MeshStandardMaterial({ map: backTex, metalness: .35, roughness: .45 }));
+back.rotation.y = Math.PI; back.position.z = -(FT + 2 * BV) - .002; card.add(back);
+
+const windowMesh = new THREE.Mesh(new THREE.ShapeGeometry(arch(new THREE.Shape()), 48), new THREE.MeshBasicMaterial({
+  colorWrite: false, depthWrite: false, stencilWrite: true, stencilRef: 1, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp,
+}));
+windowMesh.position.z = -.01; windowMesh.renderOrder = -1; card.add(windowMesh);
+
+// the space behind the window: an extruded arch seen from inside, painted with a moving nebula
+const U = { uTime: { value: 0 }, uGlow: { value: .3 }, uKey: { value: new THREE.Vector3(0, 0, -.8) } };
+const boxMat = inside(new THREE.ShaderMaterial({
+  uniforms: U, side: THREE.BackSide,
+  vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }',
+  fragmentShader: /* glsl */`
+    uniform float uTime, uGlow; uniform vec3 uKey; varying vec3 vP;
+    float h(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+    float n(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3. - 2. * f);
+      return mix(mix(h(i), h(i + vec2(1, 0)), u.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), u.x), u.y); }
+    float fbm(vec2 p){ float a = .5, s = 0.; for (int i = 0; i < 5; i++){ s += a * n(p); p = p * 2.03 + vec2(3.1, 1.7); a *= .5; } return s; }
+    void main(){
+      vec2 q = vec2(vP.x + vP.z * .6, vP.y - vP.z * .3);
+      float t = uTime * .04;
+      float w = fbm(q * 1.3 + vec2(fbm(q * 2. + t), fbm(q * 2. - t + 4.)) * 1.6);
+      vec3 col = mix(vec3(.10, .02, .16), vec3(.42, .10, .55), smoothstep(.25, .8, w));
+      col = mix(col, vec3(.9, .3, .7), smoothstep(.62, .95, w) * .55);
+      vec2 g = q * 34.; float s = h(floor(g)); vec2 f = fract(g) - .5;
+      col += vec3(1., .9, .95) * step(.965, s) * smoothstep(.12, 0., length(f)) * (.6 + .4 * sin(uTime * 3. + s * 50.));
+      float depth = smoothstep(-1.62, -.05, vP.z);
+      col *= mix(1., .55, depth * step(vP.z, -.05));
+      float d = length(vP - uKey);
+      col += vec3(1., .35, .7) * uGlow * exp(-d * 1.6) * .9;
+      gl_FragColor = vec4(col, 1.);
+    }`,
+}));
+const box = new THREE.Mesh(new THREE.ExtrudeGeometry(arch(new THREE.Shape()), { depth: DEPTH, bevelEnabled: false, curveSegments: 48 }), boxMat);
+box.position.z = -DEPTH - .01; box.renderOrder = 1; card.add(box);
+
+const circleTex = new THREE.CanvasTexture(circleCanvas); circleTex.colorSpace = THREE.SRGBColorSpace;
+const backCircle = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 1.9), inside(new THREE.MeshBasicMaterial({ map: circleTex, color: '#ff7ab8', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false })));
+backCircle.position.set(0, -.15, -DEPTH + .03); backCircle.renderOrder = 2; card.add(backCircle);
+const frontCircle = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 3.4), new THREE.MeshBasicMaterial({ map: circleTex, color: '#ffb36b', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+frontCircle.position.set(0, .05, .55); frontCircle.renderOrder = 3; card.add(frontCircle);
+
+// drifting motes inside the card (only visible through the window)
+const mote = (() => {
+  const n = 220, p = new Float32Array(n * 3), r = rng(5);
+  for (let i = 0; i < n; i++) { p[i * 3] = (r() - .5) * 1.9; p[i * 3 + 1] = -1.3 + r() * 2.9; p[i * 3 + 2] = -1.55 + r() * 1.5; }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+  const s = mk(64, 64), x = s.getContext('2d'), rg = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  rg.addColorStop(0, 'rgba(255,235,250,1)'); rg.addColorStop(1, 'rgba(255,200,240,0)'); x.fillStyle = rg; x.fillRect(0, 0, 64, 64);
+  const m = inside(new THREE.PointsMaterial({ size: .045, map: new THREE.CanvasTexture(s), transparent: true, opacity: .8, depthWrite: false, blending: THREE.AdditiveBlending, color: '#ffd0f0' }));
+  const pts = new THREE.Points(g, m); pts.renderOrder = 2; card.add(pts); return pts;
+})();
+
+/* ───────── the key: an original staff-key with antlers, a gem and two bells ───────── */
+const gold = new THREE.MeshStandardMaterial({ color: '#f5c76c', metalness: 1, roughness: .2 });
+const dark = new THREE.MeshStandardMaterial({ color: '#6b1020', metalness: .3, roughness: .35 });
+const gemMat = new THREE.MeshPhysicalMaterial({ color: '#ff5aa0', emissive: '#ff2a78', emissiveIntensity: 1, roughness: .06, clearcoat: 1, metalness: 0 });
+const keyMats = [gold, dark, gemMat];
+const key = new THREE.Group(), keyInner = new THREE.Group(); key.add(keyInner); keyInner.position.y = -.33;
+{
+  const add = (geo, mat, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.set(rx, ry, rz); keyInner.add(m); return m; };
+  add(new THREE.CylinderGeometry(.038, .032, 1.95, 24), gold, 0, -.12);
+  add(new THREE.CylinderGeometry(.052, .052, .34, 24), dark, 0, -.4);
+  for (const y of [-.58, -.4, -.22]) add(new THREE.TorusGeometry(.055, .012, 10, 32), gold, 0, y, 0, Math.PI / 2);
+  add(new THREE.SphereGeometry(.07, 24, 16), gold, 0, -1.12);
+  add(new THREE.BoxGeometry(.24, .07, .045), gold, .14, -.98); add(new THREE.BoxGeometry(.07, .17, .045), gold, .23, -.93); add(new THREE.BoxGeometry(.16, .06, .045), gold, .11, -.82);
+  add(new THREE.CylinderGeometry(.09, .04, .16, 24), gold, 0, .8);
+  add(new THREE.TorusGeometry(.17, .022, 12, 48, Math.PI), gold, 0, .96, 0, 0, 0, Math.PI);
+  add(new THREE.TorusGeometry(.27, .03, 16, 72), gold, 0, 1.13);
+  add(new THREE.TorusGeometry(.205, .01, 8, 64), gold, 0, 1.13);
+  const gem = add(new THREE.OctahedronGeometry(.13, 0), gemMat, 0, 1.13); gem.scale.set(1, 1.4, .65);
+  const tube = (pts) => new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map(([x, y]) => new THREE.Vector3(x, y, 0))), 24, .021, 8, false);
+  for (const s of [-1, 1]) {
+    add(tube([[.14 * s, 1.36], [.27 * s, 1.58], [.42 * s, 1.8]]), gold);
+    add(tube([[.24 * s, 1.53], [.38 * s, 1.58], [.5 * s, 1.52]]), gold);
+    add(tube([[.33 * s, 1.68], [.32 * s, 1.8], [.27 * s, 1.92]]), gold);
+    add(new THREE.CylinderGeometry(.006, .006, .16, 6), gold, .27 * s, .93);
+    const bell = add(new THREE.SphereGeometry(.05, 20, 14), gold, .27 * s, .83); bell.scale.y = 1.1;
+  }
+  for (const m of keyInner.children) m.renderOrder = 2;
+}
+const gemLight = new THREE.PointLight('#ff5aa8', 1.5, 4, 1.6); gemLight.position.set(0, .8, .15); key.add(gemLight);
+card.add(key);
+const KEY_IN = { p: new THREE.Vector3(.03, -.08, -.82), rz: -.52, s: .8 };
+const KEY_OUT = { p: new THREE.Vector3(0, .3, 1.3), rz: 0, s: .95 };
+
+/* ───────── chains: instanced oval links laid along curves across the window ───────── */
+const CHAINS = [
+  [[-1.2, 1.25, -.3], [0, .32, -.62], [1.2, -.95, -.98]],
+  [[1.2, 1.35, -.24], [.1, .15, -.92], [-1.2, -.6, -.36]],
+  [[-1.2, .2, -.18], [.05, -.25, -.5], [1.2, .5, -.42]],
+  [[-1.2, -1.12, -.52], [0, -.6, -.98], [1.2, .02, -.28]],
+  [[1.2, -1.2, -.3], [-.1, -.42, -.66], [-1.2, 1.02, -.92]],
+  [[-.5, 1.95, -.4], [.18, .62, -.55], [.62, -1.5, -.3]],
+  [[.9, 1.75, -.62], [-.3, .9, -.78], [-1.2, .42, -.2]],
+];
+const linkGeo = new THREE.TorusGeometry(.058, .016, 10, 22); linkGeo.scale(1.55, 1, 1);
+const chainMat = new THREE.MeshStandardMaterial({ color: '#c4c7d4', metalness: 1, roughness: .3, envMapIntensity: .75 });
+const links = [];
+{
+  const r = rng(9), up = new THREE.Vector3(0, 0, 1), keyC = KEY_IN.p.clone();
+  CHAINS.forEach((pts, ci) => {
+    const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(...p)));
+    const len = curve.getLength(), n = Math.floor(len / .118);
+    for (let i = 0; i < n; i++) {
+      const u = (i + .5) / n, p = curve.getPointAt(u), t = curve.getTangentAt(u);
+      let nn = new THREE.Vector3().crossVectors(t, up); if (nn.lengthSq() < 1e-4) nn.set(0, 1, 0); nn.normalize();
+      let b = new THREE.Vector3().crossVectors(t, nn).normalize();
+      if (i % 2) [nn, b] = [b, nn.negate()];
+      const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(t, nn, new THREE.Vector3().crossVectors(t, nn)));
+      const out = p.clone().sub(keyC); out.z = 0; out.normalize().multiplyScalar(1.2 + r() * 1.2);
+      const vel = new THREE.Vector3(out.x + (r() - .5) * .8, out.y + (r() - .5) * .8, 1.4 + r() * 2.2).multiplyScalar(1.3 + r() * 1.4);
+      links.push({ p, q, vel, axis: new THREE.Vector3(r() - .5, r() - .5, r() - .5).normalize(), spin: 5 + r() * 9,
+        delay: Math.abs(u - .5) * .9 + r() * .15 + ci * .015 });
+    }
+  });
+}
+const chain = new THREE.InstancedMesh(linkGeo, chainMat, links.length);
+chain.renderOrder = 2; chain.frustumCulled = false; card.add(chain);
+
+// sparks flung out at the moment the seal breaks
+const sparks = (() => {
+  const n = 420, r = rng(21), o = new Float32Array(n * 3), v = new Float32Array(n * 3), s = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = r() * TAU, e = (r() - .3) * 1.4, sp = 1.2 + r() * 3.4;
+    o[i * 3] = (r() - .5) * .6; o[i * 3 + 1] = (r() - .5) * 1.4; o[i * 3 + 2] = -.6 + r() * .4;
+    v[i * 3] = Math.cos(a) * sp; v[i * 3 + 1] = Math.sin(a) * sp * .9; v[i * 3 + 2] = 1 + e * 2 + r() * 1.5; s[i] = r();
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(o, 3)); g.setAttribute('vel', new THREE.BufferAttribute(v, 3)); g.setAttribute('seed', new THREE.BufferAttribute(s, 1));
+  const m = new THREE.ShaderMaterial({
+    uniforms: { uS: { value: 0 }, uPR: { value: renderer.getPixelRatio() } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: `attribute vec3 vel; attribute float seed; uniform float uS, uPR; varying float vA; varying float vSeed;
+      void main(){ float s = clamp(uS * (0.8 + seed * .5), 0., 1.); float e = 1. - pow(1. - s, 3.);
+        vec3 p = position + vel * e * .9 + vec3(0., -.35, 0.) * s * s;
+        vA = (1. - s) * step(.001, uS) * smoothstep(0., .04, s); vSeed = seed;
+        vec4 mv = modelViewMatrix * vec4(p, 1.); gl_Position = projectionMatrix * mv;
+        gl_PointSize = (2. + seed * 5.) * uPR * (4. / -mv.z); }`,
+    fragmentShader: `varying float vA; varying float vSeed; void main(){ float d = length(gl_PointCoord - .5);
+      vec3 c = mix(vec3(1., .75, .45), vec3(1., .5, .85), vSeed); gl_FragColor = vec4(c * 2.2, smoothstep(.5, 0., d) * vA); }`,
+  });
+  const pts = new THREE.Points(g, m); pts.frustumCulled = false; pts.renderOrder = 4; card.add(pts); return pts;
+})();
+
+const keyLight = new THREE.DirectionalLight('#fff1dc', 1.6); keyLight.position.set(-3, 4, 5); scene.add(keyLight);
+const fill = new THREE.PointLight('#c86bff', 1.2, 6, 1.5); fill.position.set(0, -.2, -.5); card.add(fill);
+const rim = new THREE.PointLight('#ff9a5a', 3, 12, 1.4); rim.position.set(3, -2, 2); scene.add(rim);
+
+/* ───────── background: dust and a glow ───────── */
+const halo = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), new THREE.ShaderMaterial({
+  uniforms: { uA: { value: .12 } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }',
+  fragmentShader: 'uniform float uA; varying vec2 vUv; void main(){ float r = length(vUv - .5) * 2.; gl_FragColor = vec4(vec3(.55, .2, .5) * pow(max(0., 1. - r), 2.4) * uA, 1.); }',
+}));
+halo.position.z = -4; scene.add(halo);
+
+/* ───────── the timeline: everything is a function of one progress value u ───────── */
+let u = Q.has('u') ? +Q.get('u') : 0, uTarget = u;
+const fixedU = Q.has('u');
+const m4 = new THREE.Matrix4(), qa = new THREE.Quaternion(), v3 = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+function applyTimeline(t) {
+  const charge = smooth(.02, .26, u) * (1 - smooth(.28, .33, u));
+  const shake = charge * .018;
+  // chains: rattle, then each link flies away, spinning, and shrinks out
+  for (let i = 0; i < links.length; i++) {
+    const L = links[i];
+    const k = clamp((u - .3 - L.delay * .14) / .5), e = outCubic(k);
+    v3.copy(L.p).addScaledVector(L.vel, e);
+    v3.x += Math.sin(t * 61 + i * 1.7) * shake; v3.y += Math.cos(t * 53 + i * 2.3) * shake;
+    qa.setFromAxisAngle(L.axis, e * L.spin).multiply(L.q);
+    const sc = 1 - smooth(.55, 1, k);
+    m4.compose(v3, qa, one.set(sc, sc, sc)); chain.setMatrixAt(i, m4);
+  }
+  chain.instanceMatrix.needsUpdate = true;
+  inside(chainMat, u < .3);
+  // the key rises out of the card, straightens and turns to face you
+  const k = inOutCubic(clamp((u - .34) / .56));
+  key.position.lerpVectors(KEY_IN.p, KEY_OUT.p, k);
+  key.position.y += Math.sin(k * Math.PI) * .35 + Math.sin(t * 1.3) * .05 * k;
+  key.position.x += Math.sin(t * 53) * shake * .6;
+  key.rotation.set(Math.sin(t * .9) * .06 * k, k * TAU + Math.sin(t * .7) * .35 * k, KEY_IN.rz * (1 - k) + Math.sin(t * 1.1) * .04 * k);
+  key.scale.setScalar(KEY_IN.s + (KEY_OUT.s - KEY_IN.s) * k);
+  for (const m of keyMats) inside(m, u < .34);
+  // light
+  const flash = Math.exp(-(((u - .33) / .06) ** 2));
+  const glow = .35 + 1.6 * smooth(.05, .32, u) + 1.2 * flash - .6 * smooth(.6, 1, u);
+  gemMat.emissiveIntensity = .6 + glow * .9 + Math.sin(t * 2.2) * .2;
+  gemLight.intensity = .8 + glow * 2.5;
+  U.uGlow.value = glow * .4; U.uKey.value.copy(key.position);
+  bloom.strength = .5 + flash * 1.0 + .15 * smooth(.4, 1, u);
+  backCircle.material.opacity = smooth(.04, .3, u) * (1 - .5 * smooth(.6, 1, u)) * .9;
+  backCircle.rotation.z = t * .25;
+  frontCircle.material.opacity = smooth(.45, .95, u) * .32;
+  frontCircle.scale.setScalar(.6 + .4 * outCubic(smooth(.4, 1, u)));
+  frontCircle.rotation.z = -t * .12;
+  sparks.material.uniforms.uS.value = clamp((u - .3) / .55);
+  halo.material.uniforms.uA.value = .12 + .12 * smooth(.3, 1, u) + flash * .25;
+  const rel = u > .45;
+  if (rel !== released) { released = rel; paintFace(); }
+}
+function paintFace() { drawFace(faceC.getContext('2d'), 'color'); drawFace(faceMR.getContext('2d'), 'mr'); faceTex.needsUpdate = mrTex.needsUpdate = true; }
+
+/* ───────── input ───────── */
+class Spring {
+  constructor(v, k = 90) { this.v = v; this.t = v; this.vel = 0; this.k = k; }
+  step(dt) { const n = 4, h = dt / n, w = Math.sqrt(this.k); for (let i = 0; i < n; i++) { this.vel += (-this.k * (this.v - this.t) - 2 * w * this.vel) * h; this.v += this.vel * h; } }
+}
+const rx = new Spring(0, 60), ry = new Spring(0, 60), spin = new Spring(0, 55);
+const tilt = { x: 0, y: 0 }, view = { cx: 0, cy: 0, w: 1, h: 1 };
+const fixedTilt = Q.has('tx') ? { x: +Q.get('ty') || 0, y: +Q.get('tx') || 0 } : null;
+let drag = null, lastInput = -10, now = 0;
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+const hint = document.getElementById('hint');
+function toggle() {
+  uTarget = uTarget > .5 ? 0 : 1;
+  hint.textContent = uTarget ? '再点一次 · 重新封印' : '点击卡片 · 解除封印';
+}
+function hitCard(e) {
+  ndc.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  return ray.intersectObjects([frame, windowMesh, back, key], true).length > 0;
+}
+function onMove(e) {
+  lastInput = now;
+  tilt.y = clamp((e.clientX - view.cx) / (view.w * .5), -1.2, 1.2) * .38;
+  tilt.x = clamp((e.clientY - view.cy) / (view.h * .5), -1.2, 1.2) * .3;
+  if (drag) {
+    const dx = e.clientX - drag.x0, tm = performance.now();
+    spin.t = drag.s0 + dx * .008;
+    drag.vel = (e.clientX - drag.lx) / Math.max(1, tm - drag.lt) * 8; drag.lx = e.clientX; drag.lt = tm;
+    if (Math.abs(dx) > 7) drag.moved = true;
+  }
+}
+canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.pointerId); drag = { x0: e.clientX, s0: spin.t, lx: e.clientX, lt: performance.now(), vel: 0, moved: false, t0: performance.now() }; onMove(e); });
+canvas.addEventListener('pointermove', onMove);
+const release = (e) => {
+  if (!drag) return;
+  if (!drag.moved && performance.now() - drag.t0 < 450) {
+    const facing = Math.abs(((spin.t % TAU) + TAU) % TAU - Math.PI) > Math.PI / 2;
+    if (facing && hitCard(e)) toggle(); else if (!facing) spin.t = Math.round(spin.t / TAU) * TAU;
+  } else spin.t = Math.round((spin.t + drag.vel * .22) / Math.PI) * Math.PI;
+  drag = null;
+};
+canvas.addEventListener('pointerup', release); canvas.addEventListener('pointercancel', () => { drag = null; });
+addEventListener('keydown', (e) => { if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); toggle(); } });
+
+function layout() {
+  const Wd = innerWidth, Hd = innerHeight;
+  view.cx = Wd / 2; view.cy = Hd / 2; view.w = Wd; view.h = Hd;
+  renderer.setSize(Wd, Hd, false); composer.setSize(Wd, Hd);
+  camera.aspect = Wd / Hd;
+  const vh = Math.max(H / .74, W / .8 / camera.aspect);
+  camera.position.set(0, 0, vh / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) + .3);
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', layout);
+
+const clock = new THREE.Clock();
+let frames = 0;
+function tick() {
+  const dt = Math.min(clock.getDelta(), .05); now += dt; frames++;
+  if (!fixedU) {
+    const rate = uTarget > u ? 1 / 3.4 : 1 / 2.4;
+    u = uTarget > u ? Math.min(uTarget, u + dt * rate) : Math.max(uTarget, u - dt * rate);
+  }
+  if (fixedTilt) { tilt.x = fixedTilt.x; tilt.y = fixedTilt.y; }
+  else if (now - lastInput > 2.5) {
+    const a = Math.min(1, (now - lastInput - 2.5) / 1.5) * .04;
+    tilt.y += (Math.sin(now * .55) * .26 - tilt.y) * a; tilt.x += (Math.sin(now * .4 + 1) * .14 - tilt.x) * a;
+  }
+  rx.t = tilt.x; ry.t = tilt.y; rx.step(dt); ry.step(dt);
+  spin.k = drag ? 240 : 55; spin.step(dt);
+  card.rotation.set(rx.v, ry.v + spin.v, 0);
+  card.position.y = fixedTilt ? 0 : Math.sin(now * .7) * .04;
+  U.uTime.value = now;
+  mote.rotation.z = 0; mote.position.y = Math.sin(now * .3) * .05;
+  applyTimeline(now);
+  composer.render();
+  window.__seal.u = u; window.__seal.time = now; window.__seal.frames = frames; window.__seal.spin = spin.v;
+  requestAnimationFrame(tick);
+}
+
+window.__seal = { u: 0, time: 0, frames: 0, spin: 0, toggle };
+await document.fonts.ready.catch(() => {});
+await Promise.race([document.fonts.load('900 70px "Noto Serif JP"', '鍵封印解放鹿春日'), new Promise((r) => setTimeout(r, 2500))]).catch(() => {});
+paintFace(); drawBack(backC.getContext('2d')); backTex.needsUpdate = true;
+if (fixedU && u > .5) toggle();
+if (Q.has('back')) spin.v = spin.t = Math.PI;
+layout();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

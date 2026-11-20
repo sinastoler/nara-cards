@@ -1,0 +1,745 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Holo Card Maker · 镭射闪卡生成器</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@600;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: #07060c; color: #ece8f4;
+    font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  #c.drag { cursor: grabbing; }
+  #hint { position: fixed; left: 24px; bottom: 22px; font-size: 12px; letter-spacing: .04em; opacity: .55; pointer-events: none; transition: opacity 1s; }
+  #hint.off { opacity: 0; }
+  #panel { position: fixed; top: 16px; right: 16px; bottom: 16px; width: 316px; display: flex; flex-direction: column; gap: 10px;
+    padding: 18px 18px 16px; overflow: auto; background: rgba(22, 19, 34, .64); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, .09); border-radius: 18px; scrollbar-width: thin; transition: max-height .4s; }
+  .head { display: flex; align-items: center; justify-content: space-between; }
+  h1 { font: 900 18px "Noto Serif JP", serif; letter-spacing: .06em;
+    background: linear-gradient(100deg, #ffe2a6, #ff9ccf 45%, #9fd3ff 80%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #fold { display: none; }
+  .sub { font-size: 12px; opacity: .62; line-height: 1.55; }
+  .sec { font-size: 10.5px; letter-spacing: .18em; opacity: .45; margin-top: 4px; }
+  .drop { display: flex; align-items: center; gap: 11px; padding: 9px; border: 1px dashed rgba(255, 255, 255, .18); border-radius: 12px; cursor: pointer; transition: border-color .2s, background .2s; }
+  .drop:hover, .drop.over { border-color: rgba(255, 214, 150, .65); background: rgba(255, 255, 255, .035); }
+  .drop .th { width: 34px; height: 46px; flex: none; border-radius: 6px; border: 1px solid rgba(255, 255, 255, .08);
+    background: #1c1929 center/contain no-repeat; }
+  .drop b { display: block; font-size: 13px; font-weight: 600; }
+  .drop small { display: block; font-size: 11px; opacity: .55; margin-top: 2px; }
+  .drop .x { margin-left: auto; padding: 4px 8px; font-size: 11px; white-space: nowrap; flex: none; visibility: hidden; }
+  .drop.has .x { visibility: visible; }
+  .drop input { display: none; }
+  .two { display: grid; grid-template-columns: 1fr 70px; gap: 8px; }
+  input[type=text] { width: 100%; font: inherit; font-size: 13px; color: inherit; background: rgba(255, 255, 255, .06);
+    border: 1px solid rgba(255, 255, 255, .1); border-radius: 9px; padding: 8px 10px; outline: none; }
+  input[type=text]:focus { border-color: rgba(255, 214, 150, .6); }
+  .row { display: grid; grid-template-columns: 66px 1fr 30px; align-items: center; gap: 8px; font-size: 12px; }
+  .row output { text-align: right; opacity: .55; font-variant-numeric: tabular-nums; font-size: 11px; }
+  input[type=range] { width: 100%; accent-color: #f3c97a; }
+  .seg { display: flex; gap: 6px; }
+  .seg button { flex: 1; }
+  button { font: inherit; font-size: 12px; color: inherit; background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .1);
+    border-radius: 9px; padding: 8px 10px; cursor: pointer; transition: background .2s, border-color .2s; }
+  button:hover { background: rgba(255, 255, 255, .12); }
+  button.on { background: rgba(243, 201, 122, .17); border-color: rgba(243, 201, 122, .6); color: #ffe4ae; }
+  .btns { display: flex; gap: 8px; } .btns button { flex: 1; }
+  button.primary { position: sticky; bottom: 0; box-shadow: 0 6px 24px rgba(0,0,0,.45); background: linear-gradient(110deg, #f6d38b, #f29cc6 50%, #9cd0ff); color: #1b1022; font-weight: 700; border: 0; padding: 11px; font-size: 13px; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 12px; opacity: .85; cursor: pointer; }
+  .check input { accent-color: #f3c97a; }
+  #toast { position: fixed; left: 50%; top: 22px; transform: translate(-50%, -20px); padding: 9px 16px; border-radius: 99px; font-size: 12.5px;
+    background: rgba(30, 26, 44, .85); border: 1px solid rgba(255, 255, 255, .12); opacity: 0; transition: .35s; pointer-events: none; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  body.noui #panel, body.noui #hint { display: none; }
+  @media (max-width: 760px) {
+    #panel { top: auto; left: 10px; right: 10px; bottom: 10px; width: auto; max-height: 48vh; border-radius: 16px; padding: 14px; }
+    #panel.min { max-height: 52px; overflow: hidden; }
+    #fold { display: block; padding: 4px 12px; }
+    #hint { left: 0; right: 0; top: 14px; bottom: auto; text-align: center; }
+  }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">移动鼠标倾斜卡片 · 左右拖动旋转 · 点一下翻面</div>
+<div id="toast"></div>
+<aside id="panel">
+  <div class="head"><h1>镭射闪卡生成器</h1><button id="fold">收起</button></div>
+  <p class="sub">放一张角色图，就能生成会随角度流光的镭射闪卡。线稿可选：不放的话，会自动从角色描出发光轮廓。</p>
+
+  <div class="sec">素材</div>
+  <label class="drop" id="dChar"><span class="th"></span><span><b>角色图</b><small>透明底 PNG 最好；白底会自动抠掉</small></span><button class="x" type="button">移除</button><input type="file" accept="image/*"></label>
+  <label class="drop" id="dLine"><span class="th"></span><span><b>线稿</b><small>和角色图同尺寸，白底黑线</small></span><button class="x" type="button">移除</button><input type="file" accept="image/*"></label>
+  <label class="drop" id="dBg"><span class="th"></span><span><b>背景</b><small>可选，不放就用示例背景</small></span><button class="x" type="button">移除</button><input type="file" accept="image/*"></label>
+  <div class="two"><input type="text" id="name" value="奈良の鹿" maxlength="14" aria-label="卡片名字"><input type="text" id="no" value="001" maxlength="6" aria-label="编号"></div>
+
+  <div class="sec">效果</div>
+  <div class="seg" id="pat"><button data-v="0" class="on">斜纹</button><button data-v="1">光环</button><button data-v="2">碎冰</button></div>
+  <div id="sliders"></div>
+  <label class="check"><input type="checkbox" id="sway" checked> 没有操作时自动轻轻摇摆</label>
+  <div class="btns"><button id="gyro" hidden>用陀螺仪</button><button id="reset">恢复示例</button></div>
+  <button class="primary" id="save">保存图片</button>
+</aside>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+const Q = new URLSearchParams(location.search);
+if (Q.has('noui')) document.body.classList.add('noui');
+const CW = 1000, CH = 1400, CARD_W = 2.5, CARD_H = 3.5;
+const mk = (w = CW, h = CH) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+const cv = { bgFar: mk(), bgNear: mk(), char: mk(), line: mk(), frame: mk(), back: mk() };
+const ctx = (k) => cv[k].getContext('2d', { willReadFrequently: k === 'char' });
+const rng = (s) => () => { s |= 0; s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+const TAU = Math.PI * 2;
+
+/* ───────────── demo art: a Nara deer at dusk, all drawn in code ───────────── */
+function drawBgFar(c) {
+  const r = rng(7);
+  const g = c.createLinearGradient(0, 0, 0, CH);
+  g.addColorStop(0, '#140c33'); g.addColorStop(.38, '#3a1c63'); g.addColorStop(.62, '#9a3f78');
+  g.addColorStop(.8, '#ee8f62'); g.addColorStop(1, '#ffd49a');
+  c.fillStyle = g; c.fillRect(0, 0, CW, CH);
+  for (let i = 0; i < 320; i++) {               // stars
+    const x = r() * CW, y = r() * CH * .62, s = r() ** 3 * 2.6 + .5;
+    c.globalAlpha = (.25 + r() * .75) * (1 - y / (CH * .7)); c.fillStyle = '#fff';
+    c.beginPath(); c.arc(x, y, s, 0, TAU); c.fill();
+  }
+  c.globalAlpha = 1;
+  const sx = 520, sy = 640;                       // the setting sun
+  let rg = c.createRadialGradient(sx, sy, 60, sx, sy, 560);
+  rg.addColorStop(0, 'rgba(255,200,160,.5)'); rg.addColorStop(.35, 'rgba(255,150,120,.18)'); rg.addColorStop(1, 'rgba(255,120,140,0)');
+  c.fillStyle = rg; c.fillRect(0, 0, CW, CH);
+  rg = c.createLinearGradient(0, sy - 230, 0, sy + 230);
+  rg.addColorStop(0, '#ffd9a8'); rg.addColorStop(1, '#f07a62');
+  c.fillStyle = rg; c.beginPath(); c.arc(sx, sy, 230, 0, TAU); c.fill();
+  c.strokeStyle = 'rgba(255,240,220,.16)';
+  for (let i = 0; i < 7; i++) { c.lineWidth = 2 + i * .4; c.beginPath(); c.arc(sx, sy, 280 + i * 46, 0, TAU); c.stroke(); }
+}
+
+function drawBgNear(c) {
+  c.clearRect(0, 0, CW, CH);
+  const r = rng(11);
+  c.fillStyle = '#6a2d5c';                        // far ridge
+  c.beginPath(); c.moveTo(0, 1010); c.bezierCurveTo(200, 950, 420, 1000, 600, 960); c.bezierCurveTo(780, 925, 900, 960, 1000, 940); c.lineTo(1000, CH); c.lineTo(0, CH); c.fill();
+  c.fillStyle = '#47204f';                        // three soft humps (Wakakusa-like)
+  c.beginPath(); c.moveTo(0, 1080); c.bezierCurveTo(150, 1000, 280, 1010, 380, 1050); c.bezierCurveTo(480, 990, 640, 990, 720, 1040);
+  c.bezierCurveTo(820, 1000, 930, 1010, 1000, 1040); c.lineTo(1000, CH); c.lineTo(0, CH); c.fill();
+  // pagoda silhouette
+  c.fillStyle = '#2c1238';
+  const px = 160, base = 1070;
+  c.fillRect(px - 4, base - 520, 8, 120);
+  for (let i = 0; i < 9; i++) { c.beginPath(); c.arc(px, base - 520 + 20 + i * 11, 9 - i * .4, 0, TAU); c.fill(); }
+  for (let i = 0; i < 5; i++) {
+    const y = base - i * 82, w = 118 - i * 13;
+    c.beginPath(); c.moveTo(px - w, y - 28); c.quadraticCurveTo(px - w * .6, y - 22, px - w * .45, y - 46);
+    c.lineTo(px + w * .45, y - 46); c.quadraticCurveTo(px + w * .6, y - 22, px + w, y - 28); c.lineTo(px + w * .8, y - 18); c.lineTo(px - w * .8, y - 18); c.fill();
+    c.fillRect(px - w * .42, y - 20, w * .84, 26);
+  }
+  c.fillStyle = '#1e0c27';                        // ground
+  c.beginPath(); c.moveTo(0, 1170); c.bezierCurveTo(300, 1140, 650, 1160, 1000, 1135); c.lineTo(1000, CH); c.lineTo(0, CH); c.fill();
+  for (let i = 0; i < 70; i++) {                  // grass
+    const x = r() * CW, y = 1150 + r() * 40, h = 14 + r() * 26;
+    c.strokeStyle = 'rgba(70,30,80,.9)'; c.lineWidth = 2.4;
+    c.beginPath(); c.moveTo(x, y + 10); c.quadraticCurveTo(x + 3, y - h * .5, x + (r() - .5) * 18, y - h); c.stroke();
+  }
+  // sakura branch from the top right
+  c.strokeStyle = '#2b1426'; c.lineCap = 'round';
+  const branch = (x0, y0, x1, y1, cx, cy, w) => { c.lineWidth = w; c.beginPath(); c.moveTo(x0, y0); c.quadraticCurveTo(cx, cy, x1, y1); c.stroke(); };
+  branch(1010, 150, 690, 300, 860, 170, 22); branch(860, 205, 760, 150, 820, 165, 10); branch(760, 268, 640, 360, 700, 300, 9); branch(930, 175, 910, 300, 935, 240, 8);
+  const blossom = (x, y, s) => {
+    c.save(); c.translate(x, y); c.rotate(r() * TAU);
+    for (let k = 0; k < 5; k++) {
+      c.rotate(TAU / 5); c.fillStyle = k % 2 ? '#ffc6dc' : '#ffb2cf';
+      c.beginPath(); c.ellipse(0, -s * .55, s * .42, s * .6, 0, 0, TAU); c.fill();
+    }
+    c.fillStyle = '#ff7aa8'; c.beginPath(); c.arc(0, 0, s * .2, 0, TAU); c.fill(); c.restore();
+  };
+  const pts = [[700, 300], [760, 270], [640, 360], [770, 160], [820, 215], [900, 200], [920, 290], [960, 165], [690, 330], [860, 240], [740, 230], [600, 380]];
+  for (const [x, y] of pts) for (let k = 0; k < 3; k++) blossom(x + (r() - .5) * 60, y + (r() - .5) * 50, 14 + r() * 12);
+  for (let i = 0; i < 26; i++) {                  // falling petals
+    const x = r() * CW, y = 300 + r() * 800;
+    c.save(); c.translate(x, y); c.rotate(r() * TAU); c.fillStyle = `rgba(255,${180 + r() * 40 | 0},210,${.55 + r() * .4})`;
+    c.beginPath(); c.ellipse(0, 0, 9, 5, 0, 0, TAU); c.fill(); c.restore();
+  }
+}
+
+function deerShapes() {
+  const E = (x, y, rx, ry, a = 0) => { const p = new Path2D(); p.ellipse(x, y, rx, ry, a, 0, TAU); return p; };
+  const P = (d) => new Path2D(d);
+  return {
+    legsBack: [P('M636 928 C 628 1010, 646 1080, 640 1166 L 668 1166 C 676 1080, 690 1000, 702 926 Z'),
+               P('M702 916 C 716 1000, 736 1080, 734 1164 L 762 1164 C 766 1080, 762 990, 752 898 Z')],
+    tail: E(774, 848, 28, 17, .6),
+    body: E(566, 880, 216, 112, -.04),
+    legsFront: [P('M380 930 C 384 1010, 378 1090, 372 1172 L 400 1172 C 410 1090, 418 1010, 422 935 Z'),
+                P('M442 935 C 448 1010, 452 1090, 452 1176 L 480 1176 C 484 1090, 484 1010, 480 928 Z')],
+    neck: P('M352 872 C 326 780, 318 700, 322 628 L 420 646 C 414 712, 432 786, 472 842 Z'),
+    chest: E(404, 866, 92, 108, .2),
+    head: E(348, 585, 80, 58, -.35),
+    earL: E(282, 528, 50, 20, .55), earR: E(418, 540, 52, 20, -.55),
+    snout: E(278, 626, 50, 36, -.45),
+    antlers: ['M326 540 C 318 480, 300 440, 270 398', 'M312 478 C 290 466, 272 454, 256 432', 'M298 436 C 302 410, 306 388, 298 360',
+              'M372 546 C 388 484, 410 444, 442 404', 'M394 482 C 418 472, 440 466, 458 448', 'M418 440 C 422 414, 422 392, 432 364'].map(P),
+    spots: [[500, 852, 10], [556, 832, 9], [612, 860, 10], [664, 842, 8], [540, 896, 8], [622, 906, 9], [700, 872, 8], [470, 890, 7], [590, 812, 7]],
+  };
+}
+
+function drawDeer(c, mode) {
+  const S = deerShapes(), line = mode === 'line';
+  if (line) { c.fillStyle = '#fff'; c.fillRect(0, 0, CW, CH); } else c.clearRect(0, 0, CW, CH);
+  const fur = c.createLinearGradient(0, 520, 0, 1170);
+  fur.addColorStop(0, '#d39456'); fur.addColorStop(.5, '#a8642f'); fur.addColorStop(1, '#6d391b');
+  const shape = (p, fill) => {
+    if (line) { c.fillStyle = '#fff'; c.fill(p); c.strokeStyle = '#000'; c.lineWidth = 6; c.stroke(p); }
+    else { c.fillStyle = fill; c.fill(p); c.strokeStyle = 'rgba(60,28,12,.55)'; c.lineWidth = 3; c.stroke(p); }
+  };
+  c.lineJoin = c.lineCap = 'round';
+  S.legsBack.forEach((p) => shape(p, '#7b4523'));
+  shape(S.tail, '#8d5128');
+  shape(S.body, fur);
+  if (!line) {                                    // belly light
+    c.save(); c.clip(S.body); c.fillStyle = 'rgba(240,200,150,.45)';
+    c.beginPath(); c.ellipse(560, 965, 180, 48, 0, 0, TAU); c.fill(); c.restore();
+  }
+  S.legsFront.forEach((p) => shape(p, fur));
+  shape(S.neck, fur); shape(S.chest, fur);
+  if (!line) { c.save(); c.clip(S.chest); c.fillStyle = 'rgba(245,220,180,.55)'; c.beginPath(); c.ellipse(380, 900, 46, 70, .2, 0, TAU); c.fill(); c.restore(); }
+  shape(S.earL, '#b8733c'); shape(S.earR, '#b8733c');
+  if (!line) for (const [x, y, a] of [[282, 528, .55], [418, 540, -.55]]) { c.fillStyle = '#efb9a2'; c.beginPath(); c.ellipse(x, y, 30, 9, a, 0, TAU); c.fill(); }
+  shape(S.head, fur); shape(S.snout, '#dcab7b');
+  // nose, eye
+  c.fillStyle = line ? '#000' : '#26160f';
+  c.beginPath(); c.ellipse(240, 642, 16, 12, -.4, 0, TAU); c.fill();
+  c.beginPath(); c.ellipse(334, 576, 11, 12, 0, 0, TAU); c.fill();
+  if (!line) { c.fillStyle = '#fff'; c.beginPath(); c.arc(330, 571, 3.5, 0, TAU); c.fill(); }
+  // antlers
+  for (const p of S.antlers) {
+    if (line) { c.strokeStyle = '#000'; c.lineWidth = 22; c.stroke(p); }
+    else { c.strokeStyle = 'rgba(80,50,30,.6)'; c.lineWidth = 16; c.stroke(p); }
+  }
+  for (const p of S.antlers) { c.strokeStyle = line ? '#fff' : '#efdcb6'; c.lineWidth = line ? 10 : 12; c.stroke(p); }
+  // spots
+  for (const [x, y, s] of S.spots) {
+    c.beginPath(); c.ellipse(x, y, s, s * .8, 0, 0, TAU);
+    if (line) { c.strokeStyle = '#000'; c.lineWidth = 3.5; c.stroke(); } else { c.fillStyle = 'rgba(250,238,215,.92)'; c.fill(); }
+  }
+  // hooves
+  for (const [x, y] of [[386, 1172], [466, 1176], [654, 1166], [748, 1164]]) {
+    c.fillStyle = line ? '#000' : '#3a2416'; c.beginPath(); c.roundRect(x - 15, y - 14, 30, 16, 5); c.fill();
+  }
+}
+
+function drawFrame() {
+  const c = ctx('frame'); c.clearRect(0, 0, CW, CH);
+  const gold = c.createLinearGradient(0, 0, CW, CH);
+  ['#8a6a2a', '#f8e4a6', '#b8913f', '#fff3c8', '#a07c34', '#f2d48c'].forEach((s, i, a) => gold.addColorStop(i / (a.length - 1), s));
+  c.strokeStyle = gold; c.lineWidth = 18; c.beginPath(); c.roundRect(20, 20, CW - 40, CH - 40, 48); c.stroke();
+  c.strokeStyle = 'rgba(255,232,180,.75)'; c.lineWidth = 2.5; c.beginPath(); c.roundRect(44, 44, CW - 88, CH - 88, 34); c.stroke();
+  c.fillStyle = gold; c.font = '700 26px Inter, sans-serif'; c.textBaseline = 'alphabetic';
+  c.fillText('★  SPECIAL ART', 74, 100);
+  c.textAlign = 'right'; c.fillText('No.' + (document.getElementById('no').value || '001'), CW - 74, 100); c.textAlign = 'left';
+  // name plate
+  c.fillStyle = 'rgba(16,8,26,.74)'; c.beginPath(); c.roundRect(58, 1200, CW - 116, 128, 22); c.fill();
+  c.strokeStyle = gold; c.lineWidth = 4; c.stroke();
+  const name = document.getElementById('name').value || ' ';
+  let fs = 62; c.font = `900 ${fs}px "Noto Serif JP", serif`;
+  while (c.measureText(name).width > 560 && fs > 30) { fs -= 2; c.font = `900 ${fs}px "Noto Serif JP", serif`; }
+  c.fillStyle = gold; c.fillText(name, 96, 1286);
+  c.textAlign = 'right'; c.font = '700 22px Inter, sans-serif'; c.fillText('HOLO CARD', CW - 96, 1262);
+  c.font = '600 19px "Noto Serif JP", serif'; c.fillStyle = 'rgba(255,236,196,.8)'; c.fillText('あなたの一枚', CW - 96, 1298); c.textAlign = 'left';
+  T && (T.frame.needsUpdate = true);
+}
+
+function drawBack() {
+  const c = ctx('back');
+  const g = c.createLinearGradient(0, 0, CW, CH);
+  g.addColorStop(0, '#1b1446'); g.addColorStop(.5, '#3a1d5c'); g.addColorStop(1, '#122a52');
+  c.fillStyle = g; c.fillRect(0, 0, CW, CH);
+  const gold = c.createLinearGradient(0, 0, CW, CH);
+  ['#9a7a34', '#fff0c0', '#b8913f', '#f6dc98'].forEach((s, i, a) => gold.addColorStop(i / (a.length - 1), s));
+  c.strokeStyle = 'rgba(255,230,180,.14)'; c.lineWidth = 2;
+  for (let i = 1; i < 24; i++) { c.beginPath(); c.arc(CW / 2, CH / 2, i * 38, 0, TAU); c.stroke(); }
+  c.save(); c.translate(CW / 2, CH / 2);
+  for (let i = 0; i < 48; i++) { c.rotate(TAU / 48); c.strokeStyle = 'rgba(255,230,180,.1)'; c.beginPath(); c.moveTo(0, 200); c.lineTo(0, 900); c.stroke(); }
+  c.restore();
+  c.strokeStyle = gold; c.lineWidth = 18; c.beginPath(); c.roundRect(20, 20, CW - 40, CH - 40, 48); c.stroke();
+  c.lineWidth = 6; c.beginPath(); c.arc(CW / 2, CH / 2, 190, 0, TAU); c.stroke();
+  c.lineWidth = 2; c.beginPath(); c.arc(CW / 2, CH / 2, 165, 0, TAU); c.stroke();
+  c.fillStyle = gold; c.textAlign = 'center';
+  c.font = '900 120px "Noto Serif JP", serif'; c.fillText('奈良', CW / 2, CH / 2 + 30);
+  c.font = '700 26px Inter, sans-serif'; c.fillText('H O L O   C A R D', CW / 2, CH / 2 + 92);
+  c.textAlign = 'left';
+}
+
+/* ───────────── image processing: fit, white keying, line masks ───────────── */
+const state = { charSrc: null, lineSrc: null, lineTransparent: false, bgSrc: null, box: null };
+const BOX = { x: 50, y: 110, w: 900, h: 1105 };
+function fitBox(img) {
+  const s = Math.min(BOX.w / img.width, BOX.h / img.height), w = img.width * s, h = img.height * s;
+  return { x: BOX.x + (BOX.w - w) / 2, y: BOX.y + BOX.h - h, w, h };
+}
+function loadImage(file) {
+  return new Promise((res, rej) => { const u = URL.createObjectURL(file), im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = u; });
+}
+function toCanvas(img, max = 2000) {
+  const s = Math.min(1, max / Math.max(img.width, img.height)), c = mk(Math.round(img.width * s), Math.round(img.height * s));
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return c;
+}
+function transparentFraction(c) {
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0;
+  for (let i = 3; i < d.length; i += 4 * 7) if (d[i] < 200) n++;
+  return n / (d.length / 28);
+}
+// If the picture has an opaque, near-white background, flood-fill it away from the borders (inner whites survive).
+function keyWhite(c) {
+  const w = c.width, h = c.height, x2 = c.getContext('2d'), id = x2.getImageData(0, 0, w, h), d = id.data;
+  const lum = (i) => (d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11);
+  const corners = [0, w - 1, (h - 1) * w, h * w - 1];
+  if (!corners.every((p) => d[p * 4 + 3] > 245 && lum(p * 4) > 232)) return false;
+  const seen = new Uint8Array(w * h), st = [];
+  const push = (p) => { if (!seen[p] && d[p * 4 + 3] > 0 && lum(p * 4) > 226) { seen[p] = 1; st.push(p); } };
+  for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+  while (st.length) {
+    const p = st.pop(), x = p % w;
+    d[p * 4 + 3] = 0;
+    if (x > 0) push(p - 1); if (x < w - 1) push(p + 1); if (p >= w) push(p - w); if (p < w * (h - 1)) push(p + w);
+  }
+  for (let p = 0; p < w * h; p++) {               // soften the cut edge
+    if (seen[p] || d[p * 4 + 3] === 0) continue;
+    const x = p % w;
+    if ((x > 0 && seen[p - 1]) || (x < w - 1 && seen[p + 1]) || (p >= w && seen[p - w]) || (p < w * (h - 1) && seen[p + w])) {
+      const l = lum(p * 4); if (l > 170) d[p * 4 + 3] = Math.min(d[p * 4 + 3], (255 - l) * 3);
+    }
+  }
+  x2.putImageData(id, 0, 0); return true;
+}
+// sharp mask -> R, soft glow -> G, wide halo -> B
+function buildLineTex(mask) {
+  const m = mk(), mx = m.getContext('2d'), id = mx.createImageData(CW, CH);
+  for (let i = 0; i < mask.length; i++) { const v = mask[i] * 255; id.data[i * 4] = id.data[i * 4 + 1] = id.data[i * 4 + 2] = v; id.data[i * 4 + 3] = 255; }
+  mx.putImageData(id, 0, 0);
+  const blur = (f) => {
+    const a = mk(Math.ceil(CW / f), Math.ceil(CH / f)), b = mk(Math.ceil(CW / f / 2), Math.ceil(CH / f / 2));
+    let x = a.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(m, 0, 0, a.width, a.height);
+    x = b.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(a, 0, 0, b.width, b.height);
+    const mid = mk(a.width, a.height); x = mid.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(b, 0, 0, a.width, a.height);
+    const o = mk(); x = o.getContext('2d', { willReadFrequently: true }); x.imageSmoothingQuality = 'high'; x.drawImage(mid, 0, 0, CW, CH);
+    return x.getImageData(0, 0, CW, CH).data;
+  };
+  const g = blur(4), b = blur(12);
+  const out = ctx('line').createImageData(CW, CH);
+  for (let i = 0; i < mask.length; i++) {
+    out.data[i * 4] = mask[i] * 255; out.data[i * 4 + 1] = Math.min(255, g[i * 4] * 1.8); out.data[i * 4 + 2] = Math.min(255, b[i * 4] * 2.2); out.data[i * 4 + 3] = 255;
+  }
+  ctx('line').putImageData(out, 0, 0);
+  if (T) T.line.needsUpdate = true;
+}
+function maskFromLineArt(canvas, transparentBg) {
+  const d = canvas.getContext('2d').getImageData(0, 0, CW, CH).data, M = new Float32Array(CW * CH);
+  for (let i = 0; i < M.length; i++) {
+    const a = d[i * 4 + 3] / 255, l = (d[i * 4] * .3 + d[i * 4 + 1] * .59 + d[i * 4 + 2] * .11) / 255;
+    const v = transparentBg ? a : a * (1 - l);
+    M[i] = Math.min(1, Math.max(0, (v - .12) / .5));
+  }
+  return M;
+}
+// no line art given: trace edges of the character's alpha and of its colours
+function autoLineFromChar() {
+  const d = ctx('char').getImageData(0, 0, CW, CH).data, n = CW * CH, A = new Float32Array(n), Y = new Float32Array(n), M = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const a = d[i * 4 + 3] / 255; A[i] = a; Y[i] = (d[i * 4] * .3 + d[i * 4 + 1] * .59 + d[i * 4 + 2] * .11) / 255 * a; }
+  const sob = (F, i) => {
+    const gx = F[i - CW + 1] + 2 * F[i + 1] + F[i + CW + 1] - F[i - CW - 1] - 2 * F[i - 1] - F[i + CW - 1];
+    const gy = F[i + CW - 1] + 2 * F[i + CW] + F[i + CW + 1] - F[i - CW - 1] - 2 * F[i - CW] - F[i - CW + 1];
+    return Math.sqrt(gx * gx + gy * gy);
+  };
+  for (let y = 1; y < CH - 1; y++) for (let x = 1; x < CW - 1; x++) {
+    const i = y * CW + x; if (A[i] === 0 && A[i - 1] === 0 && A[i + 1] === 0 && A[i - CW] === 0 && A[i + CW] === 0) continue;
+    const v = Math.max(sob(A, i) * .55, sob(Y, i) * 1.5);
+    M[i] = Math.min(1, Math.max(0, (v - .2) / .35));
+  }
+  return M;
+}
+
+/* ───────────── pipelines ───────────── */
+function redrawChar() {
+  const c = ctx('char'); c.clearRect(0, 0, CW, CH);
+  if (state.charSrc) { const b = state.box; c.drawImage(state.charSrc, b.x, b.y, b.w, b.h); }
+  else drawDeer(c, 'fill');
+  T.char.needsUpdate = true;
+  redrawLine();
+}
+function redrawLine() {
+  if (state.lineSrc) {
+    const tmp = mk(), b = state.box || fitBox(state.lineSrc), x = tmp.getContext('2d', { willReadFrequently: true });
+    if (!state.lineTransparent) { x.fillStyle = '#fff'; x.fillRect(0, 0, CW, CH); }
+    x.drawImage(state.lineSrc, b.x, b.y, b.w, b.h);
+    buildLineTex(maskFromLineArt(tmp, state.lineTransparent));
+  } else if (state.charSrc) buildLineTex(autoLineFromChar());
+  else { const tmp = mk(); drawDeer(tmp.getContext('2d', { willReadFrequently: true }), 'line'); buildLineTex(maskFromLineArt(tmp, false)); }
+}
+function redrawBg() {
+  if (state.bgSrc) {
+    const c = ctx('bgFar'), im = state.bgSrc, s = Math.max(CW / im.width, CH / im.height);
+    c.drawImage(im, (CW - im.width * s) / 2, (CH - im.height * s) / 2, im.width * s, im.height * s);
+    ctx('bgNear').clearRect(0, 0, CW, CH);
+  } else { drawBgFar(ctx('bgFar')); drawBgNear(ctx('bgNear')); }
+  T.bgFar.needsUpdate = T.bgNear.needsUpdate = true;
+}
+
+/* ───────────── three.js ───────────── */
+const canvas = document.getElementById('c');
+const coarse = matchMedia('(pointer: coarse)').matches;
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.6 : 2));
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#07060c');
+const camera = new THREE.PerspectiveCamera(30, 1, .1, 100);
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .45, .5, .9);
+composer.addPass(bloom); composer.addPass(new OutputPass());
+
+let T = null;
+T = {};
+for (const k of Object.keys(cv)) {
+  const t = new THREE.CanvasTexture(cv[k]);
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  t.colorSpace = k === 'line' ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+  if (k === 'char' || k === 'frame' || k === 'bgNear') t.premultiplyAlpha = true;
+  T[k] = t;
+}
+
+const U = {
+  tBgFar: { value: T.bgFar }, tBgNear: { value: T.bgNear }, tChar: { value: T.char }, tLine: { value: T.line }, tFrame: { value: T.frame }, tBack: { value: T.back },
+  uCam: { value: new THREE.Vector3() }, uLight: { value: new THREE.Vector3() }, uTime: { value: 0 }, uSize: { value: new THREE.Vector2(CARD_W, CARD_H) },
+  uHolo: { value: .9 }, uHoloChar: { value: .35 }, uGlitter: { value: .9 }, uLineGlow: { value: 1 }, uPar: { value: 1 }, uEmboss: { value: 1 }, uPattern: { value: 0 },
+};
+const card = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W, CARD_H), new THREE.ShaderMaterial({
+  uniforms: U, side: THREE.DoubleSide, transparent: true,
+  vertexShader: `varying vec2 vUv; varying vec3 vPos;
+    void main(){ vUv = uv; vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }`,
+  fragmentShader: /* glsl */`
+    precision highp float;
+    uniform sampler2D tBgFar, tBgNear, tChar, tLine, tFrame, tBack;
+    uniform vec3 uCam, uLight; uniform vec2 uSize;
+    uniform float uTime, uHolo, uHoloChar, uGlitter, uLineGlow, uPar, uEmboss, uPattern;
+    varying vec2 vUv; varying vec3 vPos;
+
+    float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+    vec2 hash2(vec2 p){ float n = hash(p); return vec2(n, hash(p + n + 17.1)); }
+    float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3. - 2. * f);
+      return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y); }
+    float fbm(vec2 p){ float a = .5, s = 0.; for (int i = 0; i < 4; i++){ s += a * vnoise(p); p = p * 2.07 + vec2(1.7, 9.2); a *= .5; } return s; }
+    vec3 hsv(float h, float s, float v){ vec3 k = clamp(abs(mod(h * 6. + vec3(0, 4, 2), 6.) - 3.) - 1., 0., 1.); return v * mix(vec3(1), k, s); }
+    float lum(vec3 c){ return dot(c, vec3(.299, .587, .114)); }
+    float sdRR(vec2 p, vec2 b, float r){ vec2 q = abs(p) - b + r; return length(max(q, 0.)) + min(max(q.x, q.y), 0.) - r; }
+    // crinkled foil: ridged fbm + fine grain
+    float height(vec2 uv){ float r = 1. - abs(fbm(uv * vec2(9., 12.6)) * 2. - 1.); return r * r * .9 + vnoise(uv * vec2(110., 154.)) * .1; }
+    vec2 voro(vec2 p){ vec2 i = floor(p), f = fract(p); float m1 = 8., m2 = 8.; vec2 id = i;
+      for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++){ vec2 g = vec2(x, y); vec2 r = g + hash2(i + g) - f; float d = dot(r, r);
+        if (d < m1){ m2 = m1; m1 = d; id = i + g; } else if (d < m2) m2 = d; }
+      return vec2(hash(id), sqrt(m2) - sqrt(m1)); }
+
+    void main(){
+      vec2 uv = vUv;
+      float d = sdRR((uv - .5) * uSize, uSize * .5, .12);
+      float aa = fwidth(d) * 1.2, alpha = 1. - smoothstep(-aa, aa, d);
+      if (alpha < .003) discard;
+      vec3 V = normalize(uCam - vPos), Lg = normalize(uLight);
+      float e = .0015, h = height(uv);
+      float hx = height(uv + vec2(e, 0.)) - h, hy = height(uv + vec2(0., e * .714)) - h;
+      vec3 N = normalize(vec3(-hx * uEmboss * 10., -hy * uEmboss * 10., 1.));
+
+      if (!gl_FrontFacing){
+        vec2 bu = vec2(1. - uv.x, uv.y); vec3 b = texture2D(tBack, bu).rgb;
+        vec3 Vb = vec3(-V.x, V.y, -V.z), Lb = vec3(-Lg.x, Lg.y, -Lg.z);
+        float nh = max(dot(N, normalize(Lb + Vb)), 0.);
+        vec2 pb = Vb.xy / max(Vb.z, .3);
+        vec3 rb = hsv(fract(dot(bu, vec2(.9, 1.3)) + pb.x * .8 + pb.y * .5 + h * .3), .65, 1.);
+        float m = smoothstep(.45, .8, lum(b));
+        b = mix(b, b * (.4 + rb * 1.5), (.2 + .4 * m) * uHolo * smoothstep(0., .5, length(pb))) + pow(nh, 140.) * (.12 + .5 * m);
+        gl_FragColor = vec4(b, alpha); return;
+      }
+
+      vec2 par = V.xy / max(V.z, .3);           // view direction in the card plane
+      float tilt = length(par);
+      vec2 c = uv - .5;
+      vec3 col = texture2D(tBgFar, c * .9 + .5 - par * .075 * uPar).rgb;
+      vec4 bn = texture2D(tBgNear, c * .95 + .5 - par * .038 * uPar); col = col * (1. - bn.a) + bn.rgb;
+      vec2 uC = uv - par * .012 * uPar;
+      vec4 ch = texture2D(tChar, uC);
+      vec4 F = texture2D(tFrame, uv);
+
+      // holographic colour: a pattern phase + the viewing angle picks a hue
+      float pat, bands;
+      if (uPattern < .5){ pat = dot(uv, vec2(.9, 1.5)) * 1.4; bands = .5 + .5 * sin(dot(uv, vec2(1., 1.5)) * 70.); }
+      else if (uPattern < 1.5){ float r = length(c * vec2(1., 1.4) + vec2(0., .1)); pat = r * 2.6; bands = .5 + .5 * sin(r * 110.); }
+      else { vec2 v = voro(uv * vec2(8., 11.2)); pat = v.x * 1.6 + dot(uv, vec2(.4, .6)); bands = .35 + .65 * smoothstep(.0, .09, v.y); }
+      float shift = par.x * 1.05 + par.y * .65;
+      float hue = fract(pat + shift + h * .35 + uTime * .01);
+      vec3 rb = hsv(hue, .72, 1.);
+      float vis = .25 + .95 * smoothstep(.02, .5, tilt);
+      float wave = pow(.5 + .5 * sin((pat * 1.6 + shift * 2.2) * 6.2832), 1.6);
+      float I = uHolo * vis * (.35 + .65 * wave) * (.55 + .45 * bands) * (.7 + .6 * h);
+      col = mix(col, col * (.25 + rb * 1.9), clamp(I * .85, 0., 1.)) + rb * I * (.13 + .38 * lum(col));
+
+      vec3 cc = ch.a > .001 ? ch.rgb / ch.a : vec3(0.);
+      float Ic = uHoloChar * vis * (.35 + .65 * wave) * (.6 + .4 * bands);
+      cc = mix(cc, cc * (.4 + rb * 1.4), clamp(Ic * .5, 0., 1.)) + rb * Ic * .12 * lum(cc);
+      col = mix(col, cc, ch.a);
+
+      // glitter: each cell is a tiny mirror that flashes at its own angle
+      float bgMask = (1. - ch.a) * (1. - F.a);
+      vec2 g = uv * vec2(64., 89.6), id = floor(g); vec2 f = fract(g) - .5;
+      float rr = hash(id); f -= (hash2(id + 3.1) - .5) * .5;
+      vec2 dir = (hash2(id + 7.7) - .5) * 1.3;
+      float face = pow(max(0., 1. - length(par - dir) * 2.2), 3.);
+      float tw = .6 + .4 * sin(uTime * 2.6 + rr * 60.);
+      float sz = mix(.6, 1.6, hash(id + 1.3));
+      float star = (exp(-abs(f.x) * 46. / sz) * exp(-abs(f.y) * 7. / sz) + exp(-abs(f.y) * 46. / sz) * exp(-abs(f.x) * 7. / sz)) * .8 + exp(-dot(f, f) * 160. / sz);
+      float glit = star * face * tw * step(.45, rr) + exp(-dot(f, f) * 300.) * step(.93, rr) * .25 * tw;
+      col += (vec3(1., .96, .88) * 1.5 + rb * .5) * glit * uGlitter * bgMask;
+
+      // glowing line art
+      vec4 Lt = texture2D(tLine, uC);
+      float shim = .55 + .45 * sin(uv.y * 22. + uv.x * 7. - shift * 9. + uTime * .8);
+      vec3 lc = mix(vec3(1., .97, .9), hsv(fract(hue + .15 + uv.y * .35), .5, 1.), .55);
+      col = mix(col, lc, clamp(Lt.r * uLineGlow, 0., 1.) * .75);
+      col += lc * (Lt.r * .9 * shim + Lt.g * .2 + Lt.b * .1) * uLineGlow * (.5 + .6 * vis);
+
+      // light on the embossed surface
+      float nh = max(dot(N, normalize(Lg + V)), 0.);
+      float sp = pow(nh, 140.), sh = pow(nh, 12.);
+      col *= .9 + .2 * dot(N, Lg);
+      col += sp * .22 * (.3 + .7 * bgMask) + sh * .02;
+
+      // metallic frame
+      vec3 fr = F.a > .001 ? F.rgb / F.a : vec3(0.);
+      float metal = smoothstep(.4, .7, max(fr.r, max(fr.g, fr.b)));
+      vec3 fc = fr * (.72 + .5 * dot(N, Lg)) + metal * (sp * .9 + sh * .12) + rb * metal * .4 * uHolo * vis;
+      col = mix(col, fc, F.a);
+      col += smoothstep(-.05, 0., d) * .15 * rb;
+      gl_FragColor = vec4(col, alpha);
+    }`,
+}));
+scene.add(card);
+
+// a soft coloured halo behind the card and some floating dust
+const halo = new THREE.Mesh(new THREE.PlaneGeometry(16, 16), new THREE.ShaderMaterial({
+  uniforms: { uCol: { value: new THREE.Color('#7a4bd0') } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }',
+  fragmentShader: 'uniform vec3 uCol; varying vec2 vUv; void main(){ float r = length(vUv - .5) * 2.; gl_FragColor = vec4(uCol * pow(max(0., 1. - r), 2.6) * .22, 1.); }',
+}));
+halo.position.z = -3; scene.add(halo);
+const dust = (() => {
+  const n = 260, p = new Float32Array(n * 3), r = rng(3);
+  for (let i = 0; i < n; i++) { p[i * 3] = (r() - .5) * 12; p[i * 3 + 1] = (r() - .5) * 8; p[i * 3 + 2] = -4 + r() * 6; }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+  const s = mk(64, 64), x = s.getContext('2d'), rg = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  rg.addColorStop(0, 'rgba(255,240,220,1)'); rg.addColorStop(1, 'rgba(255,240,220,0)'); x.fillStyle = rg; x.fillRect(0, 0, 64, 64);
+  const m = new THREE.PointsMaterial({ size: .05, map: new THREE.CanvasTexture(s), transparent: true, opacity: .55, depthWrite: false, blending: THREE.AdditiveBlending });
+  const pts = new THREE.Points(g, m); scene.add(pts); return pts;
+})();
+
+/* ───────────── motion: springs driven by pointer, gyro or idle sway ───────────── */
+class Spring {
+  constructor(v, k = 90) { this.v = v; this.t = v; this.vel = 0; this.k = k; }
+  step(dt) { const n = 4, h = dt / n, w = Math.sqrt(this.k); for (let i = 0; i < n; i++) { this.vel += (-this.k * (this.v - this.t) - 2 * w * this.vel) * h; this.v += this.vel * h; } }
+}
+const rx = new Spring(0, 70), ry = new Spring(0, 70), spin = new Spring(0, 60);
+const tilt = { x: 0, y: 0 };
+let lastInput = -10, drag = null, gyro = null, now = 0;
+const fixed = Q.has('tx') ? { x: +Q.get('ty') || 0, y: +Q.get('tx') || 0 } : null;
+if (Q.has('back')) spin.v = spin.t = Math.PI;
+const view = { cx: 0, cy: 0, w: 1, h: 1 };
+
+function onMove(e) {
+  lastInput = now;
+  const nx = Math.max(-1.2, Math.min(1.2, (e.clientX - view.cx) / (view.w * .5)));
+  const ny = Math.max(-1.2, Math.min(1.2, (e.clientY - view.cy) / (view.h * .5)));
+  tilt.y = nx * .42; tilt.x = ny * .34;
+  if (drag) {
+    const dx = e.clientX - drag.x0, t = performance.now();
+    spin.t = drag.s0 + dx * .0085;
+    drag.vel = (e.clientX - drag.lx) / Math.max(1, t - drag.lt) * 1000 * .0085; drag.lx = e.clientX; drag.lt = t;
+    if (Math.abs(dx) > 6) drag.moved = true;
+  }
+  hint.classList.add('off');
+}
+canvas.addEventListener('pointerdown', (e) => {
+  canvas.setPointerCapture(e.pointerId); canvas.classList.add('drag');
+  drag = { x0: e.clientX, s0: spin.t, lx: e.clientX, lt: performance.now(), vel: 0, moved: false, t0: performance.now() };
+  onMove(e);
+});
+canvas.addEventListener('pointermove', onMove);
+const release = () => {
+  if (!drag) return; canvas.classList.remove('drag');
+  if (!drag.moved && performance.now() - drag.t0 < 400) spin.t = Math.round(spin.t / Math.PI) * Math.PI + Math.PI;   // tap: flip
+  else spin.t = Math.round((spin.t + drag.vel * .22) / Math.PI) * Math.PI;                                              // fling, land face up or face down
+  drag = null;
+};
+canvas.addEventListener('pointerup', release); canvas.addEventListener('pointercancel', release);
+canvas.addEventListener('pointerleave', () => { if (!drag) lastInput = now - 1.2; });
+
+const gyroBtn = document.getElementById('gyro');
+if (coarse && 'DeviceOrientationEvent' in window) gyroBtn.hidden = false;
+gyroBtn.onclick = async () => {
+  try { if (DeviceOrientationEvent.requestPermission && (await DeviceOrientationEvent.requestPermission()) !== 'granted') return; } catch { return; }
+  gyro = gyro ? null : {};
+  gyroBtn.classList.toggle('on', !!gyro);
+};
+addEventListener('deviceorientation', (e) => {
+  if (!gyro || e.gamma == null) return;
+  if (gyro.b0 == null) gyro.b0 = e.beta;
+  tilt.y = Math.max(-1, Math.min(1, e.gamma / 28)) * .42; tilt.x = Math.max(-1, Math.min(1, (e.beta - gyro.b0) / 24)) * .34; lastInput = now;
+});
+
+function layout() {
+  const W = innerWidth, H = innerHeight, p = document.getElementById('panel').getBoundingClientRect();
+  const noui = document.body.classList.contains('noui'), narrow = W <= 760;
+  let fx = 0, fy = 0, fw = W, fh = H;
+  if (!noui) { if (narrow) fh = p.top; else fw = p.left; }
+  view.cx = fx + fw / 2; view.cy = fy + fh / 2; view.w = fw; view.h = fh;
+  renderer.setSize(W, H, false); composer.setSize(W, H);
+  camera.aspect = W / H;
+  const vh = Math.max(CARD_H * H / (.8 * fh), CARD_W * H / (.82 * fw) * (W / H) / camera.aspect);
+  camera.position.set(0, 0, vh / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))));
+  camera.setViewOffset(W, H, W / 2 - view.cx, H / 2 - view.cy, W, H);
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', layout);
+
+const hint = document.getElementById('hint');
+const lightW = new THREE.Vector3(-.45, .75, 1).normalize(), qInv = new THREE.Quaternion(), tmpV = new THREE.Vector3();
+const clock = new THREE.Clock();
+let frames = 0;
+function frame() {
+  const dt = Math.min(clock.getDelta(), .05); now += dt; frames++;
+  if (fixed) { tilt.x = fixed.x; tilt.y = fixed.y; }
+  else if (!gyro && document.getElementById('sway').checked && now - lastInput > 2.5) {
+    const k = Math.min(1, (now - lastInput - 2.5) / 1.5);
+    tilt.y += (Math.sin(now * .62) * .34 - tilt.y) * k * .05; tilt.x += (Math.sin(now * .45 + 1) * .2 - tilt.x) * k * .05;
+  }
+  rx.t = tilt.x; ry.t = tilt.y;
+  rx.step(dt); ry.step(dt); spin.k = drag ? 260 : 60; spin.step(dt);
+  card.rotation.set(rx.v, ry.v + spin.v, 0);
+  card.position.y = fixed ? 0 : Math.sin(now * .8) * .035;
+  card.updateMatrixWorld();
+  U.uCam.value.copy(card.worldToLocal(tmpV.copy(camera.position)));
+  U.uLight.value.copy(lightW).applyQuaternion(qInv.copy(card.quaternion).invert());
+  U.uTime.value = now;
+  halo.material.uniforms.uCol.value.setHSL(((ry.v * .35 + rx.v * .25 + now * .02) % 1 + 1) % 1, .6, .38);
+  dust.rotation.y = now * .015; dust.position.y = Math.sin(now * .2) * .1;
+  composer.render();
+  window.__holo.time = now; window.__holo.frames = frames; window.__holo.spin = spin.v;
+  requestAnimationFrame(frame);
+}
+
+/* ───────────── UI ───────────── */
+const sliders = [
+  ['uHolo', '镭射', 0, 1.6, .9], ['uHoloChar', '角色镭射', 0, 1.2, .35], ['uGlitter', '闪粉', 0, 1.6, .9], ['uLineGlow', '线稿发光', 0, 2, 1],
+  ['uPar', '视差深度', 0, 2.2, 1], ['uEmboss', '压纹', 0, 2.5, 1], ['bloom', '辉光', 0, 1.6, .45],
+];
+const box = document.getElementById('sliders');
+for (const [k, label, a, b, v] of sliders) {
+  const row = document.createElement('label'); row.className = 'row';
+  row.innerHTML = `<span>${label}</span><input type="range" min="${a}" max="${b}" step="0.01" value="${v}"><output>${v.toFixed(2)}</output>`;
+  const inp = row.querySelector('input'), out = row.querySelector('output');
+  const set = () => { const x = +inp.value; out.textContent = x.toFixed(2); if (k === 'bloom') bloom.strength = x; else U[k].value = x; };
+  inp.oninput = set; inp.dataset.def = v; set(); box.appendChild(row);
+}
+document.querySelectorAll('#pat button').forEach((b) => b.onclick = () => {
+  document.querySelectorAll('#pat button').forEach((o) => o.classList.toggle('on', o === b)); U.uPattern.value = +b.dataset.v;
+});
+if (Q.has('pat')) document.querySelectorAll('#pat button')[+Q.get('pat')]?.click();
+
+const toastEl = document.getElementById('toast');
+let toastT; const toast = (s) => { toastEl.textContent = s; toastEl.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove('show'), 2400); };
+
+async function handle(slot, file) {
+  if (!file || !file.type.startsWith('image/')) return toast('请选择图片文件');
+  const img = await loadImage(file).catch(() => null);
+  if (!img) return toast('这张图打不开');
+  const el = document.getElementById(slot);
+  el.querySelector('.th').style.backgroundImage = `url(${img.src})`; el.classList.add('has');
+  if (slot === 'dChar') {
+    const c = toCanvas(img); const keyed = keyWhite(c);
+    state.charSrc = c; state.box = fitBox(c); redrawChar();
+    toast(keyed ? '已自动抠掉白底' + (state.lineSrc ? '' : '，并生成了发光线稿') : state.lineSrc ? '角色已更新' : '已从角色自动生成发光线稿');
+  } else if (slot === 'dLine') {
+    const c = toCanvas(img); state.lineSrc = c; state.lineTransparent = transparentFraction(c) > .3; redrawLine();
+    toast('线稿已套用');
+  } else { state.bgSrc = toCanvas(img, 2400); redrawBg(); toast('背景已更换'); }
+}
+for (const id of ['dChar', 'dLine', 'dBg']) {
+  const el = document.getElementById(id), inp = el.querySelector('input');
+  inp.onchange = () => { handle(id, inp.files[0]); inp.value = ''; };
+  el.querySelector('.x').onclick = (e) => {
+    e.preventDefault(); e.stopPropagation(); el.classList.remove('has'); el.querySelector('.th').style.backgroundImage = '';
+    if (id === 'dChar') { state.charSrc = null; state.box = null; redrawChar(); }
+    else if (id === 'dLine') { state.lineSrc = null; redrawLine(); }
+    else { state.bgSrc = null; redrawBg(); }
+  };
+  el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('over'); });
+  el.addEventListener('dragleave', () => el.classList.remove('over'));
+  el.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); el.classList.remove('over'); handle(id, e.dataTransfer.files[0]); });
+}
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files[0]) handle('dChar', e.dataTransfer.files[0]); });
+
+document.getElementById('name').oninput = drawFrame;
+document.getElementById('no').oninput = drawFrame;
+document.getElementById('reset').onclick = () => {
+  Object.assign(state, { charSrc: null, lineSrc: null, bgSrc: null, box: null });
+  document.querySelectorAll('.drop').forEach((el) => { el.classList.remove('has'); el.querySelector('.th').style.backgroundImage = ''; });
+  document.getElementById('name').value = '奈良の鹿'; document.getElementById('no').value = '001';
+  box.querySelectorAll('input').forEach((i) => { i.value = i.dataset.def; i.oninput(); });
+  document.querySelector('#pat button').click();
+  redrawBg(); redrawChar(); drawFrame(); toast('已恢复示例');
+};
+document.getElementById('fold').onclick = () => {
+  const p = document.getElementById('panel'); p.classList.toggle('min');
+  document.getElementById('fold').textContent = p.classList.contains('min') ? '展开' : '收起';
+  setTimeout(layout, 420);
+};
+
+// save: render once, crop around the card's on-screen bounds
+document.getElementById('save').onclick = () => {
+  composer.render();
+  const r = renderer.domElement, pr = renderer.getPixelRatio();
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const [x, y] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    const v = new THREE.Vector3(x * CARD_W / 2, y * CARD_H / 2, 0).applyMatrix4(card.matrixWorld).project(camera);
+    const sx = (v.x * .5 + .5) * innerWidth, sy = (-v.y * .5 + .5) * innerHeight;
+    x0 = Math.min(x0, sx); x1 = Math.max(x1, sx); y0 = Math.min(y0, sy); y1 = Math.max(y1, sy);
+  }
+  const m = 40; x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(innerWidth, x1 + m); y1 = Math.min(innerHeight, y1 + m);
+  const out = mk(Math.round((x1 - x0) * pr), Math.round((y1 - y0) * pr));
+  out.getContext('2d').drawImage(r, x0 * pr, y0 * pr, out.width, out.height, 0, 0, out.width, out.height);
+  const a = document.createElement('a'); a.download = (document.getElementById('name').value || 'holo-card') + '.png';
+  a.href = out.toDataURL('image/png'); a.click(); toast('图片已保存');
+};
+
+window.__holo = { time: 0, frames: 0, spin: 0, state, U, layout };
+await document.fonts.ready.catch(() => {});
+await Promise.race([document.fonts.load('900 60px "Noto Serif JP"', '奈良の鹿'), new Promise((r) => setTimeout(r, 2500))]).catch(() => {});
+drawBack(); T.back.needsUpdate = true;
+redrawBg(); redrawChar(); drawFrame();
+layout();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -25,6 +25,11 @@ Swipe through seven cards, flip them over, hold one up close to look into the pi
 
 `demo.html` holds two kinetic-type experiments: karaoke-filled words on 3D planes, and letters riding a 3D orbit.
 
+## More pages
+
+- **[holo.html](https://sinastoler.github.io/nara-cards/holo.html): holo card maker.** Upload a character, line art and a background (or use the built-in deer) and get a holographic flash card with emboss, angle-based rainbow foil, glitter, glowing line art and layer parallax. White backgrounds are keyed out and line art can be generated automatically. Tilt with the mouse or gyroscope, drag to flip, save as PNG.
+- **[seal.html](https://sinastoler.github.io/nara-cards/seal.html): sealed card.** A lacquered card with a real 3D chamber behind its arched window. A key sits inside, bound by metal chains. Tap the card (or press Space) to break the seal: the chains shatter link by link and the key rises out in front of a magic circle. Tap again to seal it back. Drag to turn the card over.
+
 ## Run locally
 
 The pages load three.js and fonts from CDNs, so serve the folder over HTTP (opening the file directly will not work):
